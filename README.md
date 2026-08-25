@@ -4,6 +4,8 @@
 > · 📚 GitHub:[yequ172672/dsh-codex-subscription](https://github.com/yequ172672/dsh-codex-subscription)
 > · 🏷️ 属于 [dsh-plugin](https://github.com/topics/dsh-plugin) 插件话题
 
+本仓库名称为 `dsh-codex-subscription`，发布到 npm 的包名为 `dsh-llm-codex`。
+
 DSH(DeepSeek Harness)LLM 适配器插件:**直接复用 Codex CLI 的本地登录凭证**,在 DSH 中
 使用 ChatGPT 订阅模型(gpt-5.6-sol 等),不需要 API Key。
 
@@ -80,6 +82,13 @@ test/smoke.mjs      端到端冒烟测试(只读,绝不写 auth.json)
 3. **已登录 Codex CLI**:`codex login`(插件直接复用其凭证,无需 API Key)。
 4. **能访问 chatgpt.com**(国内网络通常需要代理,见下文"机器相关配置")。
 
+### DSH 版本兼容性
+
+从 `0.1.3` 开始，DSH 核心包作为宿主 peer dependency 使用，不再在插件中固定安装
+`@deepseek-ai/dsh-llm`、`@deepseek-ai/dsh-settings` 和 `@deepseek-ai/dsh-timeout` 的旧版本。
+该版本兼容 DSH `0.1.0-rc.6` 至 `0.1.0-rc.8`，以及 `0.1.1-rc.1` 和
+`0.1.1-rc.2`。
+
 ### 安装插件
 
 安装已发布的包:
@@ -106,6 +115,14 @@ dsh plugin --profile web add D:\CODE\dsh\dsh-llm-codex
 > 版本号的 `add` 即可回到范围跟踪。另外,刚发布的新版本可能触发 pnpm 的
 > `minimumReleaseAge` 供应链策略(写入 pnpm-workspace.yaml 的排除清单或短暂提示),
 > 属正常现象。
+
+如果从 `0.1.2` 或更早版本升级，旧版本可能已经在 profile 中安装了
+`@deepseek-ai/dsh-llm@0.1.0-rc.6`。建议先移除旧插件，再安装新版本，避免旧依赖残留：
+
+```powershell
+dsh plugin --profile web remove dsh-llm-codex
+dsh plugin --profile web add dsh-llm-codex
+```
 
 验证组合结果(不启动服务):
 
