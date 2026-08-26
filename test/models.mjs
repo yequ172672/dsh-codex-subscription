@@ -6,7 +6,9 @@ import { completeEntry } from '../lib/models.js';
 
 test('model entries default to text input and preserve configured modalities', () => {
   assert.deepEqual(completeEntry({ id: 'gpt-5.5' }).input, ['text']);
+  assert.deepEqual(completeEntry({ id: 'gpt-5.6-sol', input: ['text', 'image'] }).input, ['text', 'image']);
   assert.deepEqual(completeEntry({ id: 'gpt-5.6-luna', input: ['text', 'image'] }).input, ['text', 'image']);
+  assert.deepEqual(completeEntry({ id: 'gpt-5.6-terra', input: ['text', 'image'] }).input, ['text', 'image']);
   assert.deepEqual(completeEntry({ id: 'gpt-5.6-luna', input: ['image', 'unknown', 'image'] }).input, ['image']);
 });
 

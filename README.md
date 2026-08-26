@@ -156,6 +156,16 @@ llm-codex:
   requestImagePixelBudget: 4194304 # 单张图片最大像素,默认 2048 × 2048
   requestImageMaxBytes: 1048576    # 单张请求版本最大编码大小,默认 1 MiB
   staticModels:
+    - id: gpt-5.6-sol
+      name: GPT-5.6-Sol
+      contextWindow: 272000
+      maxTokens: 128000
+      input: [text, image]
+    - id: gpt-5.6-terra
+      name: GPT-5.6-Terra
+      contextWindow: 272000
+      maxTokens: 128000
+      input: [text, image]
     - id: gpt-5.6-luna
       name: GPT-5.6-Luna
       contextWindow: 272000
@@ -163,8 +173,8 @@ llm-codex:
       input: [text, image]
 ```
 
-`input` 只允许 `text` 和 `image`;未声明时默认为 `[text]`。首版仅建议将
-`gpt-5.6-luna` 声明为 `[text, image]`,该字段只是对 Codex 端点能力的声明,
+`input` 只允许 `text` 和 `image`;未声明时默认为 `[text]`。当前建议将
+`gpt-5.6-sol`、`gpt-5.6-terra` 和 `gpt-5.6-luna` 声明为 `[text, image]`,该字段只是对 Codex 端点能力的声明,
 最终仍以服务端是否接受图片请求为准。设置段热更新,无需重启。
 
 选用 codex 作为默认模型(settings.yaml):
@@ -221,7 +231,8 @@ npm run test:smoke -- gpt-5.6-sol --tools   # 额外验证工具调用路径
 
 - 本插件会读取并(在刷新时)改写 `~/.codex/auth.json`,与 codex CLI 行为一致;如不希望
   写回,设置 `writeBack: false`(届时过期令牌只在内存中刷新,重启 dsh 后重新刷新)。
-- 首版图片输入仅开放给配置为 `input: [text, image]` 的 `gpt-5.6-luna`;图片通过
+- 图片输入开放给配置为 `input: [text, image]` 的 `gpt-5.6-sol`、`gpt-5.6-terra` 和
+  `gpt-5.6-luna`;图片通过
   DSH 可选附件服务读取并转换为 Responses API 的 `input_image`。没有附件服务、
   图片超出限制、或 system/assistant 历史消息包含图片时,适配器会以
   `UNSUPPORTED_CONTENT` 明确拒绝,不会静默丢图。
