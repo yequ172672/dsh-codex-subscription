@@ -64,6 +64,8 @@ lib/
   constants.js  wire 常量(端点/头/上下文窗口)
 cordis.bundle.yml   dsh.bundle 声明的 profile 层(插件行;安装后自动挂载)
 test/serialize.mjs  请求序列化单元测试
+test/models.mjs     模型能力目录与适配器能力单元测试
+test/index.mjs      单元测试入口(避免 Windows 测试运行器额外 spawn)
 test/smoke.mjs      端到端冒烟测试(只读,绝不写 auth.json)
 ```
 
@@ -146,7 +148,24 @@ llm-codex:
 也可用环境变量 `HTTPS_PROXY`(优先级:显式 `proxy` 配置 > `HTTPS_PROXY` >
 `HTTP_PROXY`;`NO_PROXY` 命中的主机直连)。其他可选字段:`clientVersion`(默认
 `0.144.1`)、`writeBack`(默认 `true`)、`authFile`、`modelsCacheFile`、
-`staticModels`(显式模型目录)。设置段热更新,无需重启。
+`staticModels`(显式模型目录)。图片请求还可配置:
+
+```yaml
+llm-codex:
+  maxRequestImageBytes: 20971520   # 单次请求图片 Base64 总预算,默认 20 MiB
+  requestImagePixelBudget: 4194304 # 单张图片最大像素,默认 2048 × 2048
+  requestImageMaxBytes: 1048576    # 单张请求版本最大编码大小,默认 1 MiB
+  staticModels:
+    - id: gpt-5.6-luna
+      name: GPT-5.6-Luna
+      contextWindow: 272000
+      maxTokens: 128000
+      input: [text, image]
+```
+
+`input` 只允许 `text` 和 `image`;未声明时默认为 `[text]`。首版仅建议将
+`gpt-5.6-luna` 声明为 `[text, image]`,该字段只是对 Codex 端点能力的声明,
+最终仍以服务端是否接受图片请求为准。设置段热更新,无需重启。
 
 选用 codex 作为默认模型(settings.yaml):
 
@@ -202,5 +221,11 @@ npm run test:smoke -- gpt-5.6-sol --tools   # 额外验证工具调用路径
 
 - 本插件会读取并(在刷新时)改写 `~/.codex/auth.json`,与 codex CLI 行为一致;如不希望
   写回,设置 `writeBack: false`(届时过期令牌只在内存中刷新,重启 dsh 后重新刷新)。
-- 适配器为文本 only:图片内容会以 `UNSUPPORTED_CONTENT` 拒绝。
+- 首版图片输入仅开放给配置为 `input: [text, image]` 的 `gpt-5.6-luna`;图片通过
+  DSH 可选附件服务读取并转换为 Responses API 的 `input_image`。没有附件服务、
+  图片超出限制、或 system/assistant 历史消息包含图片时,适配器会以
+  `UNSUPPORTED_CONTENT` 明确拒绝,不会静默丢图。
+- 服务端可能仍拒绝图片参数;此时请移除该模型的 `image` 能力并开启新会话,因为
+  原图片会保留在历史 session log 中。历史图片超出单次预算时,适配器只在当前请求
+  中优先省略较早图片,不修改原始会话记录。
 - 订阅额度由 OpenAI 按账号计量,与 codex CLI 共用同一配额。
