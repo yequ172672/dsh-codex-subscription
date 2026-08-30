@@ -1,6 +1,6 @@
 # dsh-llm-codex
 
-> 📦 已发布到 npm:[dsh-llm-codex@0.1.1](https://www.npmjs.com/package/dsh-llm-codex)
+> 📦 已发布到 npm:[dsh-llm-codex@0.1.6](https://www.npmjs.com/package/dsh-llm-codex)
 > · 📚 GitHub:[yequ172672/dsh-codex-subscription](https://github.com/yequ172672/dsh-codex-subscription)
 > · 🏷️ 属于 [dsh-plugin](https://github.com/topics/dsh-plugin) 插件话题
 
@@ -53,12 +53,13 @@ Codex CLI(`codex login`)会把 ChatGPT 订阅的 OAuth 令牌写入 `~/.codex/au
 
 ```
 lib/
+  provider-error.js  统一上游错误提取、分类、脱敏与诊断
   index.js      插件入口(注册 provider "codex" + 可配置 provider 目录 + 设置段)
   adapter.js    CodexAdapter:fetch + SSE → StreamChunk(仿 dsh-llm-deepseek)
   auth.js       auth.json 读取 / 订阅令牌刷新 / 原子写回
   serialize.js  harness 消息 → Responses API 请求体
   translate.js  Responses SSE 事件 → StreamChunk
-  sse.js        SSE 字节流解析(Responses 协议无 [DONE])
+  sse.js        SSE 字节流解析(兼容 Responses 与 [DONE])
   models.js     模型目录:实时发现 → models_cache.json → 静态兜底
   transport.js  可选 HTTP CONNECT 代理(https-proxy-agent + node-fetch)
   constants.js  wire 常量(端点/头/上下文窗口)
@@ -66,6 +67,7 @@ cordis.bundle.yml   dsh.bundle 声明的 profile 层(插件行;安装后自动�
 test/serialize.mjs  请求序列化单元测试
 test/models.mjs     模型能力目录与适配器能力单元测试
 test/index.mjs      单元测试入口(避免 Windows 测试运行器额外 spawn)
+ test/errors.mjs      HTTP/SSE 错误提取、分类与脱敏测试
 test/smoke.mjs      端到端冒烟测试(只读,绝不写 auth.json)
 ```
 
@@ -202,6 +204,18 @@ dsh plugin --profile web remove dsh-llm-codex   # 移除
 发布前检查:`files` 字段含 `lib` 与 `cordis.bundle.yml`;`dsh.bundle.patch` 指向的
 patch 文件只含插件行,不含任何机器相关的配置。
 
+## 错误可观测性与安全
+
+插件统一提取 HTTP、SSE `error`、`response.failed`、JSON 字符串和传输异常中的结构化字段。错误会按 `AUTH`、`RATE_LIMIT`、`QUOTA`、`CONTEXT_WINDOW_EXCEEDED`、`INVALID_REQUEST`、`SERVER`、`TRANSPORT`、`TIMEOUT`、`STREAM_CLOSED` 或 `PROVIDER` 分类，并保留有限的上游摘要。
+
+示例（具体 message 会按实际字段裁剪）：
+
+```text
+Codex provider error; provider=codex; status=400; code=context_length_exceeded; message=Context window exceeded; requestId=req_xxx; diagnostics={"model":"gpt-5.6-sol","requestBytes":1234567}
+```
+
+请求诊断只包含模型、字节数、输入/消息/工具数量、工具输出长度、图片数量、reasoning 和上下文窗口等统计，不包含完整请求体。raw 摘要最多 4000 字符，并会清理 Authorization、Bearer/OAuth token、Cookie、JWT、prompt、messages、工具结果和图片数据。插件不会把完整响应 body 写入日志或 session。
+
 ## 测试
 
 ```powershell
@@ -222,8 +236,10 @@ npm run test:smoke -- gpt-5.6-sol --tools   # 额外验证工具调用路径
 | `MISSING_CREDENTIAL:无法读取 Codex 凭证文件` | 先运行 `codex login` 登录 |
 | `TRANSPORT:Connect Timeout` | 本机直连 ChatGPT 后端被墙;配置 `proxy`(见上文) |
 | HTTP 401 且刷新失败 | 订阅过期或被风控;运行 `codex login` 重新登录 |
-| HTTP 429 | 订阅额度/限流,稍后重试 |
+| HTTP 429 | 显示 `RATE_LIMIT` 与上游摘要,由 Harness 外层策略处理限流;若明确额度耗尽则显示 `QUOTA` |
+| HTTP 400 上下文超限 | 显示 `CONTEXT_WINDOW_EXCEEDED`、上游 code/message、request id 与安全 diagnostics,不会误报为普通 `provider error` |
 | `INVALID_REQUEST:System messages are not allowed` | 系统提示已自动改走 `instructions` 字段,不应出现;如出现请升级插件 |
+| 其他 HTTP/SSE 上游错误 | 错误中保留 provider、status、code/type、message/detail、request id 与最多 4000 字符的脱敏 raw 摘要 |
 | `INVALID_REQUEST:Unsupported parameter` | 订阅后端拒绝 `max_output_tokens`/`temperature`/`stop`,适配器已自动剥离;如仍出现请升级插件 |
 | 模型列表为空 | 实时发现失败且本地无 models_cache.json 时使用内置静态列表 |
 
