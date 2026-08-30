@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { normalizeCallId, serializeMessages } from '../lib/serialize.js';
+import { normalizeCallId, serializeMessages, stringifyRequestBody } from '../lib/serialize.js';
 
 async function pairedCallIds(id) {
   const messages = [
@@ -121,6 +121,17 @@ test('offloads older images without mutating the source messages', async () => {
   ]);
   assert.equal(result[1].content[0].type, 'input_image');
   assert.equal(messages[0].content[0].type, 'image');
+});
+
+test('reports safe request serialization failures without body contents', () => {
+  const circular = {};
+  circular.self = circular;
+  assert.throws(() => stringifyRequestBody(circular), (error) => {
+    assert.equal(error.code, 'INVALID_REQUEST');
+    assert.match(error.message, /serialization failed/);
+    assert.doesNotMatch(error.message, /complete|request body contents/i);
+    return true;
+  });
 });
 
 test('serializes images nested in tool results', async () => {
