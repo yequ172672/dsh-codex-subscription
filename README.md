@@ -90,8 +90,8 @@ test/smoke.mjs      端到端冒烟测试(只读,绝不写 auth.json)
 
 从 `0.1.3` 开始，DSH 核心包作为宿主 peer dependency 使用，不再在插件中固定安装
 `@deepseek-ai/dsh-llm`、`@deepseek-ai/dsh-settings` 和 `@deepseek-ai/dsh-timeout` 的旧版本。
-该版本兼容 DSH `0.1.0-rc.6` 至 `0.1.0-rc.8`，以及 `0.1.1-rc.1` 和
-`0.1.1-rc.2`。
+`dsh-llm-codex@0.1.7` 兼容 DSH `0.1.2-rc.1` 至 `0.1.x` 的 `0.1.2` 系列版本；
+旧版 DSH 请继续使用 `dsh-llm-codex@0.1.6`。
 
 ### 安装插件
 

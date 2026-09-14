@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.7
+
+- 适配 DSH `0.1.2-rc.1` 的 `ToolCallId` 与 Settings `installSection` API。
+- 将 peer/dev 依赖更新到 DSH `0.1.2-rc.1`，不再错误声明兼容旧 Settings API。
+
 ## 0.1.6
 
 - 保留 Codex 上游错误信息，不再将可识别故障归一化为无信息的 `provider error`。
