@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { normalizeCallId, serializeMessages, stringifyRequestBody } from '../lib/serialize.js';
+import { normalizeCallId, requestDiagnostics, serializeMessages, serializeRequest, stringifyRequestBody } from '../lib/serialize.js';
+import { applyWireTarget, parsePickerModelId, resolveWireModel } from '../lib/service-tier.js';
 
 async function pairedCallIds(id) {
   const messages = [
@@ -24,6 +25,45 @@ async function pairedCallIds(id) {
     .filter((item) => Object.hasOwn(item, 'call_id'))
     .map((item) => item.call_id);
 }
+
+test('maps picker ids to wire ids and service tiers without leaking synthetic ids', () => {
+  assert.deepEqual(parsePickerModelId('gpt-5.6-luna'), { wireId: 'gpt-5.6-luna', fast: false });
+  assert.deepEqual(resolveWireModel('gpt-5.6-luna'), { wireId: 'gpt-5.6-luna' });
+  assert.deepEqual(resolveWireModel('gpt-5.6-luna-fast'), { wireId: 'gpt-5.6-luna', serviceTier: 'priority' });
+  assert.deepEqual(resolveWireModel('unknown'), { wireId: 'unknown' });
+  assert.deepEqual(resolveWireModel('unknown-fast'), { wireId: 'unknown', serviceTier: 'priority' });
+  assert.deepEqual(parsePickerModelId('model-fast-fast'), { wireId: 'model-fast', fast: true });
+  const original = { model: 'picker-fast', input: [] };
+  const projected = applyWireTarget(original, { wireId: 'picker', serviceTier: 'priority' });
+  assert.deepEqual(projected, { model: 'picker', input: [], service_tier: 'priority' });
+  assert.deepEqual(original, { model: 'picker-fast', input: [] });
+});
+
+test('serializes ordinary and Fast models with purpose-safe wire fields', async () => {
+  const options = {
+    model: 'gpt-5.6-luna-fast',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+  };
+  const fast = await serializeRequest(options);
+  assert.equal(fast.model, 'gpt-5.6-luna');
+  assert.equal(fast.service_tier, 'priority');
+  assert.equal(fast.model.includes('-fast'), false);
+  const compact = await serializeRequest({ ...options, purpose: 'compaction' });
+  assert.deepEqual({ model: compact.model, service_tier: compact.service_tier }, { model: 'gpt-5.6-luna', service_tier: undefined });
+  const ordinary = await serializeRequest({ ...options, model: 'gpt-5.6-luna' });
+  assert.equal(ordinary.model, 'gpt-5.6-luna');
+  assert.equal(Object.hasOwn(ordinary, 'service_tier'), false);
+});
+
+test('request diagnostics expose tier facts without request contents', () => {
+  const body = { model: 'gpt-5.6-luna', service_tier: 'priority', input: [{ content: [{ type: 'input_text', text: 'secret prompt' }] }] };
+  const facts = requestDiagnostics({ model: 'gpt-5.6-luna-fast', messages: [{ content: [{ type: 'text', text: 'secret prompt' }] }] }, body, JSON.stringify(body));
+  assert.equal(facts.pickerModel, 'gpt-5.6-luna-fast');
+  assert.equal(facts.wireModel, 'gpt-5.6-luna');
+  assert.equal(facts.requestedServiceTier, 'priority');
+  assert.equal(Object.hasOwn(facts, 'input'), false);
+  assert.equal(Object.hasOwn(facts, 'prompt'), false);
+});
 
 test('normalizes foreign history call IDs for Responses API replay', async () => {
   const longId =

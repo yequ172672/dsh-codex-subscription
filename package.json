@@ -1,6 +1,6 @@
 {
   "name": "dsh-llm-codex",
-  "version": "0.1.7",
+  "version": "0.2.0",
   "description": "DSH LLM 适配器插件:复用 Codex CLI 本地登录凭证(~/.codex/auth.json)在 DSH 中直接使用 ChatGPT 订阅模型",
   "type": "module",
   "main": "lib/index.js",

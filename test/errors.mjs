@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { CodexAdapter } from '../lib/adapter.js';
 import { extractProviderError } from '../lib/provider-error.js';
 import { translate } from '../lib/translate.js';
+import { BlockAssembler } from '@deepseek-ai/dsh-llm';
 
 async function collect(iterable) {
   const out = [];
@@ -82,6 +83,50 @@ test('response.failed and invalid SSE JSON retain useful diagnostics', async () 
   const malformed = await captureError(() => collect(translate((async function* () { yield '{not-json'; })(), { provider: 'codex' })));
   assert.equal(malformed.code, 'INVALID_RESPONSE');
   assert.match(malformed.message, /not-json/);
+});
+
+test('records actual priority tier in private replay metadata', async () => {
+  const chunks = await collect(translate((async function* () {
+    yield JSON.stringify({ type: 'response.output_text.delta', item_id: 'msg', delta: 'ok' });
+    yield JSON.stringify({ type: 'response.completed', response: { service_tier: 'priority' } });
+  })(), { model: 'gpt-5.6-luna-fast', requestedServiceTier: 'priority' }));
+  const finish = chunks.find((chunk) => chunk.type === 'finish');
+  assert.deepEqual(finish.replayState.response, {
+    requestedServiceTier: 'priority',
+    actualServiceTier: 'priority',
+    serviceTierStatus: 'fulfilled',
+  });
+  assert.equal(Object.hasOwn(finish, 'serviceTier'), false);
+});
+
+test('records Fast downgrade without failing normal completion', async () => {
+  const chunks = await collect(translate((async function* () {
+    yield JSON.stringify({ type: 'response.output_text.delta', item_id: 'msg', delta: 'ok' });
+    yield JSON.stringify({ type: 'response.completed', response: { service_tier: 'default' } });
+  })(), { model: 'gpt-5.6-luna-fast', requestedServiceTier: 'priority' }));
+  const finish = chunks.find((chunk) => chunk.type === 'finish');
+  assert.equal(finish.reason.kind, 'stop');
+  assert.equal(finish.replayState.response.serviceTierStatus, 'downgraded');
+  assert.equal(finish.replayState.response.actualServiceTier, 'default');
+});
+
+test('ordinary completion has no Fast replay metadata', async () => {
+  const chunks = await collect(translate((async function* () {
+    yield JSON.stringify({ type: 'response.output_text.delta', item_id: 'msg', delta: 'ok' });
+    yield JSON.stringify({ type: 'response.completed', response: {} });
+  })(), { model: 'gpt-5.6-luna' }));
+  const finish = chunks.find((chunk) => chunk.type === 'finish');
+  assert.equal(Object.hasOwn(finish, 'replayState'), false);
+});
+
+test('DSH BlockAssembler preserves response replay metadata', async () => {
+  const chunks = await collect(translate((async function* () {
+    yield JSON.stringify({ type: 'response.output_text.delta', item_id: 'msg', delta: 'ok' });
+    yield JSON.stringify({ type: 'response.completed', response: { service_tier: 'default' } });
+  })(), { model: 'gpt-5.6-luna-fast', requestedServiceTier: 'priority' }));
+  const assembler = new BlockAssembler();
+  for (const chunk of chunks) assembler.push(chunk);
+  assert.equal(assembler.replayState.response.serviceTierStatus, 'downgraded');
 });
 
 test('natural SSE close is STREAM_CLOSED and includes stream facts', async () => {

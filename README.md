@@ -45,7 +45,12 @@ Codex CLI(`codex login`)会把 ChatGPT 订阅的 OAuth 令牌写入 `~/.codex/au
   `auth.openai.com/oauth/token` 刷新并自动重试一次;刷新成功后默认**原子写回**
   auth.json(`writeBack: false` 可关闭),与 codex CLI 行为一致,两边凭证永远同步。
 - **模型目录**:优先实时拉取 `GET {base}/codex/models`,失败时回退
-  `~/.codex/models_cache.json`,再回退内置静态列表。
+  `~/.codex/models_cache.json`,再回退内置静态列表。明确支持 Fast 的模型会额外出现
+  `base-model-fast` synthetic 行；该行在上游请求中使用基础模型 ID 与顶层
+  `service_tier: "priority"`，不会把 `-fast` picker ID 发给上游。
+- **Fast 能力识别**:优先识别目录 `service_tiers[].id === "priority"`;旧目录的
+  `additional_speed_tiers: ["fast"]` 作为兼容回退。仅有未知 tier（例如 `ultrafast`）或
+  名称包含 Fast 不会自动生成 Fast 行。Fast 是 service tier，不是 reasoning effort。
 - **协议**:OpenAI Responses API(`stream: true` SSE),推理摘要、正文、工具调用分别映射为
   DSH 的 reasoning / text / tool-call 块,usage 从 `response.completed` 提取。
 
@@ -163,6 +168,10 @@ llm-codex:
       contextWindow: 272000
       maxTokens: 128000
       input: [text, image]
+      serviceTiers:
+        - id: priority
+          name: Fast
+          description: Priority processing
     - id: gpt-5.6-terra
       name: GPT-5.6-Terra
       contextWindow: 272000
@@ -187,6 +196,33 @@ agent-default-model:
   model: gpt-5.6-sol
   reasoningEffort: medium
 ```
+
+选择 Fast synthetic 行时，只需将模型 ID 改为对应的 `-fast` 变体：
+
+```yaml
+agent-default-model:
+  provider: codex
+  model: gpt-5.6-sol-fast
+  reasoningEffort: medium
+```
+
+插件发送的请求映射为：
+
+```json
+{
+  "model": "gpt-5.6-sol",
+  "service_tier": "priority"
+}
+```
+
+普通 `gpt-5.6-sol` 请求不会带 `service_tier`。Fast 可能因账号额度、容量、区域或
+服务端 ramp-rate 限制降级为普通服务；插件从 `response.completed.response.service_tier`
+读取实际等级，并通过私有 replay metadata 记录 `requestedServiceTier`、
+`actualServiceTier` 和降级状态。当前 DSH 标准 `StreamChunk` 没有 service-tier 字段，
+因此第一阶段不向标准 chunk 或 Web UI 伪造字段。`compaction` 和 `session-title` 辅助请求
+默认使用基础模型和 default tier，以避免无意消耗 Fast 配额。
+
+回滚时重新选择不带 `-fast` 的基础模型即可，无需迁移 session header 或 DSH 核心配置。
 
 ## 发布到 npm(dsh 插件库)
 
@@ -255,4 +291,7 @@ npm run test:smoke -- gpt-5.6-sol --tools   # 额外验证工具调用路径
 - 服务端可能仍拒绝图片参数;此时请移除该模型的 `image` 能力并开启新会话,因为
   原图片会保留在历史 session log 中。历史图片超出单次预算时,适配器只在当前请求
   中优先省略较早图片,不修改原始会话记录。
-- 订阅额度由 OpenAI 按账号计量,与 codex CLI 共用同一配额。
+- 订阅额度由 OpenAI 按账号计量,与 codex CLI 共用同一配额。Fast 会产生更高的 service-tier
+  费用/配额消耗；请求 Fast 不保证实际使用 Fast，服务端可能返回 `default`。默认
+  `clientVersion: 0.144.1` 保持不变；Fast 依赖的 Codex/OpenAI 动态协议应在发布前绑定
+  具体 commit 或 spec 版本，不能把 GitHub main 的未来字段视为稳定保证。
