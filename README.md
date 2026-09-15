@@ -1,8 +1,10 @@
 # dsh-llm-codex
 
-> 📦 已发布到 npm:[dsh-llm-codex@0.1.1](https://www.npmjs.com/package/dsh-llm-codex)
+> 📦 已发布到 npm:[dsh-llm-codex@0.1.6](https://www.npmjs.com/package/dsh-llm-codex)
 > · 📚 GitHub:[yequ172672/dsh-codex-subscription](https://github.com/yequ172672/dsh-codex-subscription)
 > · 🏷️ 属于 [dsh-plugin](https://github.com/topics/dsh-plugin) 插件话题
+
+本仓库名称为 `dsh-codex-subscription`，发布到 npm 的包名为 `dsh-llm-codex`。
 
 DSH(DeepSeek Harness)LLM 适配器插件:**直接复用 Codex CLI 的本地登录凭证**,在 DSH 中
 使用 ChatGPT 订阅模型(gpt-5.6-sol 等),不需要 API Key。
@@ -43,7 +45,12 @@ Codex CLI(`codex login`)会把 ChatGPT 订阅的 OAuth 令牌写入 `~/.codex/au
   `auth.openai.com/oauth/token` 刷新并自动重试一次;刷新成功后默认**原子写回**
   auth.json(`writeBack: false` 可关闭),与 codex CLI 行为一致,两边凭证永远同步。
 - **模型目录**:优先实时拉取 `GET {base}/codex/models`,失败时回退
-  `~/.codex/models_cache.json`,再回退内置静态列表。
+  `~/.codex/models_cache.json`,再回退内置静态列表。明确支持 Fast 的模型会额外出现
+  `base-model-fast` synthetic 行；该行在上游请求中使用基础模型 ID 与顶层
+  `service_tier: "priority"`，不会把 `-fast` picker ID 发给上游。
+- **Fast 能力识别**:优先识别目录 `service_tiers[].id === "priority"`;旧目录的
+  `additional_speed_tiers: ["fast"]` 作为兼容回退。仅有未知 tier（例如 `ultrafast`）或
+  名称包含 Fast 不会自动生成 Fast 行。Fast 是 service tier，不是 reasoning effort。
 - **协议**:OpenAI Responses API(`stream: true` SSE),推理摘要、正文、工具调用分别映射为
   DSH 的 reasoning / text / tool-call 块,usage 从 `response.completed` 提取。
 
@@ -51,17 +58,21 @@ Codex CLI(`codex login`)会把 ChatGPT 订阅的 OAuth 令牌写入 `~/.codex/au
 
 ```
 lib/
+  provider-error.js  统一上游错误提取、分类、脱敏与诊断
   index.js      插件入口(注册 provider "codex" + 可配置 provider 目录 + 设置段)
   adapter.js    CodexAdapter:fetch + SSE → StreamChunk(仿 dsh-llm-deepseek)
   auth.js       auth.json 读取 / 订阅令牌刷新 / 原子写回
   serialize.js  harness 消息 → Responses API 请求体
   translate.js  Responses SSE 事件 → StreamChunk
-  sse.js        SSE 字节流解析(Responses 协议无 [DONE])
+  sse.js        SSE 字节流解析(兼容 Responses 与 [DONE])
   models.js     模型目录:实时发现 → models_cache.json → 静态兜底
   transport.js  可选 HTTP CONNECT 代理(https-proxy-agent + node-fetch)
   constants.js  wire 常量(端点/头/上下文窗口)
 cordis.bundle.yml   dsh.bundle 声明的 profile 层(插件行;安装后自动挂载)
 test/serialize.mjs  请求序列化单元测试
+test/models.mjs     模型能力目录与适配器能力单元测试
+test/index.mjs      单元测试入口(避免 Windows 测试运行器额外 spawn)
+ test/errors.mjs      HTTP/SSE 错误提取、分类与脱敏测试
 test/smoke.mjs      端到端冒烟测试(只读,绝不写 auth.json)
 ```
 
@@ -79,6 +90,13 @@ test/smoke.mjs      端到端冒烟测试(只读,绝不写 auth.json)
 2. **已安装 pnpm**(`dsh plugin` 会转发给它;缺失时 CLI 会提示)。
 3. **已登录 Codex CLI**:`codex login`(插件直接复用其凭证,无需 API Key)。
 4. **能访问 chatgpt.com**(国内网络通常需要代理,见下文"机器相关配置")。
+
+### DSH 版本兼容性
+
+从 `0.1.3` 开始，DSH 核心包作为宿主 peer dependency 使用，不再在插件中固定安装
+`@deepseek-ai/dsh-llm`、`@deepseek-ai/dsh-settings` 和 `@deepseek-ai/dsh-timeout` 的旧版本。
+`dsh-llm-codex@0.1.7` 兼容 DSH `0.1.2-rc.1` 至 `0.1.x` 的 `0.1.2` 系列版本；
+旧版 DSH 请继续使用 `dsh-llm-codex@0.1.6`。
 
 ### 安装插件
 
@@ -107,6 +125,14 @@ dsh plugin --profile web add D:\CODE\dsh\dsh-llm-codex
 > `minimumReleaseAge` 供应链策略(写入 pnpm-workspace.yaml 的排除清单或短暂提示),
 > 属正常现象。
 
+如果从 `0.1.2` 或更早版本升级，旧版本可能已经在 profile 中安装了
+`@deepseek-ai/dsh-llm@0.1.0-rc.6`。建议先移除旧插件，再安装新版本，避免旧依赖残留：
+
+```powershell
+dsh plugin --profile web remove dsh-llm-codex
+dsh plugin --profile web add dsh-llm-codex
+```
+
 验证组合结果(不启动服务):
 
 ```powershell
@@ -129,7 +155,38 @@ llm-codex:
 也可用环境变量 `HTTPS_PROXY`(优先级:显式 `proxy` 配置 > `HTTPS_PROXY` >
 `HTTP_PROXY`;`NO_PROXY` 命中的主机直连)。其他可选字段:`clientVersion`(默认
 `0.144.1`)、`writeBack`(默认 `true`)、`authFile`、`modelsCacheFile`、
-`staticModels`(显式模型目录)。设置段热更新,无需重启。
+`staticModels`(显式模型目录)。图片请求还可配置:
+
+```yaml
+llm-codex:
+  maxRequestImageBytes: 20971520   # 单次请求图片 Base64 总预算,默认 20 MiB
+  requestImagePixelBudget: 4194304 # 单张图片最大像素,默认 2048 × 2048
+  requestImageMaxBytes: 1048576    # 单张请求版本最大编码大小,默认 1 MiB
+  staticModels:
+    - id: gpt-5.6-sol
+      name: GPT-5.6-Sol
+      contextWindow: 272000
+      maxTokens: 128000
+      input: [text, image]
+      serviceTiers:
+        - id: priority
+          name: Fast
+          description: Priority processing
+    - id: gpt-5.6-terra
+      name: GPT-5.6-Terra
+      contextWindow: 272000
+      maxTokens: 128000
+      input: [text, image]
+    - id: gpt-5.6-luna
+      name: GPT-5.6-Luna
+      contextWindow: 272000
+      maxTokens: 128000
+      input: [text, image]
+```
+
+`input` 只允许 `text` 和 `image`;未声明时默认为 `[text]`。当前建议将
+`gpt-5.6-sol`、`gpt-5.6-terra` 和 `gpt-5.6-luna` 声明为 `[text, image]`,该字段只是对 Codex 端点能力的声明,
+最终仍以服务端是否接受图片请求为准。设置段热更新,无需重启。
 
 选用 codex 作为默认模型(settings.yaml):
 
@@ -139,6 +196,33 @@ agent-default-model:
   model: gpt-5.6-sol
   reasoningEffort: medium
 ```
+
+选择 Fast synthetic 行时，只需将模型 ID 改为对应的 `-fast` 变体：
+
+```yaml
+agent-default-model:
+  provider: codex
+  model: gpt-5.6-sol-fast
+  reasoningEffort: medium
+```
+
+插件发送的请求映射为：
+
+```json
+{
+  "model": "gpt-5.6-sol",
+  "service_tier": "priority"
+}
+```
+
+普通 `gpt-5.6-sol` 请求不会带 `service_tier`。Fast 可能因账号额度、容量、区域或
+服务端 ramp-rate 限制降级为普通服务；插件从 `response.completed.response.service_tier`
+读取实际等级，并通过私有 replay metadata 记录 `requestedServiceTier`、
+`actualServiceTier` 和降级状态。当前 DSH 标准 `StreamChunk` 没有 service-tier 字段，
+因此第一阶段不向标准 chunk 或 Web UI 伪造字段。`compaction` 和 `session-title` 辅助请求
+默认使用基础模型和 default tier，以避免无意消耗 Fast 配额。
+
+回滚时重新选择不带 `-fast` 的基础模型即可，无需迁移 session header 或 DSH 核心配置。
 
 ## 发布到 npm(dsh 插件库)
 
@@ -155,6 +239,18 @@ dsh plugin --profile web remove dsh-llm-codex   # 移除
 
 发布前检查:`files` 字段含 `lib` 与 `cordis.bundle.yml`;`dsh.bundle.patch` 指向的
 patch 文件只含插件行,不含任何机器相关的配置。
+
+## 错误可观测性与安全
+
+插件统一提取 HTTP、SSE `error`、`response.failed`、JSON 字符串和传输异常中的结构化字段。错误会按 `AUTH`、`RATE_LIMIT`、`QUOTA`、`CONTEXT_WINDOW_EXCEEDED`、`INVALID_REQUEST`、`SERVER`、`TRANSPORT`、`TIMEOUT`、`STREAM_CLOSED` 或 `PROVIDER` 分类，并保留有限的上游摘要。
+
+示例（具体 message 会按实际字段裁剪）：
+
+```text
+Codex provider error; provider=codex; status=400; code=context_length_exceeded; message=Context window exceeded; requestId=req_xxx; diagnostics={"model":"gpt-5.6-sol","requestBytes":1234567}
+```
+
+请求诊断只包含模型、字节数、输入/消息/工具数量、工具输出长度、图片数量、reasoning 和上下文窗口等统计，不包含完整请求体。raw 摘要最多 4000 字符，并会清理 Authorization、Bearer/OAuth token、Cookie、JWT、prompt、messages、工具结果和图片数据。插件不会把完整响应 body 写入日志或 session。
 
 ## 测试
 
@@ -176,8 +272,10 @@ npm run test:smoke -- gpt-5.6-sol --tools   # 额外验证工具调用路径
 | `MISSING_CREDENTIAL:无法读取 Codex 凭证文件` | 先运行 `codex login` 登录 |
 | `TRANSPORT:Connect Timeout` | 本机直连 ChatGPT 后端被墙;配置 `proxy`(见上文) |
 | HTTP 401 且刷新失败 | 订阅过期或被风控;运行 `codex login` 重新登录 |
-| HTTP 429 | 订阅额度/限流,稍后重试 |
+| HTTP 429 | 显示 `RATE_LIMIT` 与上游摘要,由 Harness 外层策略处理限流;若明确额度耗尽则显示 `QUOTA` |
+| HTTP 400 上下文超限 | 显示 `CONTEXT_WINDOW_EXCEEDED`、上游 code/message、request id 与安全 diagnostics,不会误报为普通 `provider error` |
 | `INVALID_REQUEST:System messages are not allowed` | 系统提示已自动改走 `instructions` 字段,不应出现;如出现请升级插件 |
+| 其他 HTTP/SSE 上游错误 | 错误中保留 provider、status、code/type、message/detail、request id 与最多 4000 字符的脱敏 raw 摘要 |
 | `INVALID_REQUEST:Unsupported parameter` | 订阅后端拒绝 `max_output_tokens`/`temperature`/`stop`,适配器已自动剥离;如仍出现请升级插件 |
 | 模型列表为空 | 实时发现失败且本地无 models_cache.json 时使用内置静态列表 |
 
@@ -185,5 +283,15 @@ npm run test:smoke -- gpt-5.6-sol --tools   # 额外验证工具调用路径
 
 - 本插件会读取并(在刷新时)改写 `~/.codex/auth.json`,与 codex CLI 行为一致;如不希望
   写回,设置 `writeBack: false`(届时过期令牌只在内存中刷新,重启 dsh 后重新刷新)。
-- 适配器为文本 only:图片内容会以 `UNSUPPORTED_CONTENT` 拒绝。
-- 订阅额度由 OpenAI 按账号计量,与 codex CLI 共用同一配额。
+- 图片输入开放给配置为 `input: [text, image]` 的 `gpt-5.6-sol`、`gpt-5.6-terra` 和
+  `gpt-5.6-luna`;图片通过
+  DSH 可选附件服务读取并转换为 Responses API 的 `input_image`。没有附件服务、
+  图片超出限制、或 system/assistant 历史消息包含图片时,适配器会以
+  `UNSUPPORTED_CONTENT` 明确拒绝,不会静默丢图。
+- 服务端可能仍拒绝图片参数;此时请移除该模型的 `image` 能力并开启新会话,因为
+  原图片会保留在历史 session log 中。历史图片超出单次预算时,适配器只在当前请求
+  中优先省略较早图片,不修改原始会话记录。
+- 订阅额度由 OpenAI 按账号计量,与 codex CLI 共用同一配额。Fast 会产生更高的 service-tier
+  费用/配额消耗；请求 Fast 不保证实际使用 Fast，服务端可能返回 `default`。默认
+  `clientVersion: 0.144.1` 保持不变；Fast 依赖的 Codex/OpenAI 动态协议应在发布前绑定
+  具体 commit 或 spec 版本，不能把 GitHub main 的未来字段视为稳定保证。
