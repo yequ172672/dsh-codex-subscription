@@ -5,19 +5,19 @@
  * 运行前提:本仓库目录下存在 node_modules(见 install.ps1 / README 的联调说明),
  * 且 ~/.codex/auth.json 已通过 "codex login" 登录。
  *
- * 用法:node test/smoke.mjs [模型名,默认 gpt-5.6-sol]
+ * 用法:node test/smoke.mjs [模型名,默认 gpt-6.1-sol]
  */
 
 import { CodexAdapter } from '../lib/adapter.js';
 import { CodexCredentials } from '../lib/auth.js';
 
-const model = process.argv[2] ?? process.env.CODEX_SMOKE_MODEL ?? 'gpt-5.6-sol';
+const model = process.argv[2] ?? process.env.CODEX_SMOKE_MODEL ?? 'gpt-6.1-sol';
 const withTools = process.argv.includes('--tools');
 const provider = 'codex';
 
 const config = {
   writeBack: false, // 冒烟测试绝不改写用户的 auth.json
-  clientVersion: '0.144.1',
+  // clientVersion 走插件默认(constants.js,当前 0.160.1)
   streamIdleTimeoutMs: 180_000,
 };
 const credentials = new CodexCredentials(() => config);

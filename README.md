@@ -1,14 +1,29 @@
 # dsh-llm-codex
 
-> 📦 已发布到 npm:[dsh-llm-codex@0.1.1](https://www.npmjs.com/package/dsh-llm-codex)
+> 📦 已发布到 npm:[dsh-llm-codex](https://www.npmjs.com/package/dsh-llm-codex)(当前仓库版本 0.2.0)
 > · 📚 GitHub:[yequ172672/dsh-codex-subscription](https://github.com/yequ172672/dsh-codex-subscription)
 > · 🏷️ 属于 [dsh-plugin](https://github.com/topics/dsh-plugin) 插件话题
 
 DSH(DeepSeek Harness)LLM 适配器插件:**直接复用 Codex CLI 的本地登录凭证**,在 DSH 中
-使用 ChatGPT 订阅模型(gpt-5.6-sol 等),不需要 API Key。
+使用 ChatGPT 订阅模型(gpt-6.1-sol 等),不需要 API Key。
 
 这是一个标准的 **dsh 插件包**:包内 `dsh.bundle.patch` 声明使其成为 profile 层,
 通过官方 `dsh plugin` 命令安装后**自动激活**,无需手工编辑任何 composition 文件。
+
+## 版本兼容性
+
+| 插件版本 | DSH 桌面端 | 宿主 dsh-llm | 配置模型 |
+| --- | --- | --- | --- |
+| 0.2.x | ≥ 44(0.2.0-rc.2) | 0.2.x | 导出 `Config` + 全字段 `.volatile()`,设置页自动生成 |
+| 0.1.x | ≤ 43(0.1.0-rc.6) | 0.1.x | `settings.yaml` 的 `llm-codex:` 段 |
+
+0.1.x 在 DSH ≥ 44 上会装载失败:宿主已删除 `settings.register`(设置服务重构为
+表单投影),且 `LlmRuntime` 每次调用都会调用 0.1.x `LlmAdapter` 上不存在的
+`prepareCall`。请使用 0.2.x。
+
+**Codex wire 版本**:服务端按 `version` 头门控模型目录 —— 旧默认 `0.144.1` 只返回
+旧目录且拒绝 `gpt-6.1-sol`(HTTP 400 "not supported … ChatGPT account");0.2.x 默认
+已升到 `0.160.1`(2026-10 实测返回全量目录)。可用配置 `clientVersion` 覆盖。
 
 ## 搭配推荐:dsh-session-import-codex
 
@@ -51,8 +66,8 @@ Codex CLI(`codex login`)会把 ChatGPT 订阅的 OAuth 令牌写入 `~/.codex/au
 
 ```
 lib/
-  index.js      插件入口(注册 provider "codex" + 可配置 provider 目录 + 设置段)
-  adapter.js    CodexAdapter:fetch + SSE → StreamChunk(仿 dsh-llm-deepseek)
+  index.js      插件入口(注册 provider "codex" + 目录条目 + volatile Config)
+  adapter.js    CodexAdapter:fetch + SSE → StreamChunk(含 60s 模型目录缓存)
   auth.js       auth.json 读取 / 订阅令牌刷新 / 原子写回
   serialize.js  harness 消息 → Responses API 请求体
   translate.js  Responses SSE 事件 → StreamChunk
@@ -61,8 +76,10 @@ lib/
   transport.js  可选 HTTP CONNECT 代理(https-proxy-agent + node-fetch)
   constants.js  wire 常量(端点/头/上下文窗口)
 cordis.bundle.yml   dsh.bundle 声明的 profile 层(插件行;安装后自动挂载)
-test/serialize.mjs  请求序列化单元测试
-test/smoke.mjs      端到端冒烟测试(只读,绝不写 auth.json)
+test/serialize.mjs       请求序列化单元测试
+test/apply-contract.mjs  0.2.0 宿主装载契约测试(离线)
+test/smoke.mjs           端到端冒烟测试(只读,绝不写 auth.json)
+test/version-probe.mjs   client_version 门控探针 + 最小流式对话
 ```
 
 ## 安装(dsh 官方插件命令)
@@ -116,28 +133,38 @@ dsh --profile web --dump-config   # 应看到 "# == dsh-llm-codex" 与 llm-codex
 重启 dsh 后,Web 模型选择器出现 **Codex (ChatGPT 订阅)** provider,插件清单页
 (设置 → 插件)也会列出 `llm-codex` 条目。
 
-## 机器相关配置(settings.yaml,不进包)
+## 机器相关配置(不进包)
 
-ChatGPT 后端通常需要走本地代理;Node 原生 fetch 不读系统代理,在
-`$DSH_HOME/settings.yaml` 配置:
+ChatGPT 后端通常需要走本地代理;Node 原生 fetch 不读系统代理。
+
+**DSH ≥ 44(插件 0.2.x)**:`settings.yaml` 已退役 —— DSH 启动时会把旧
+`settings.yaml` 的段一次性迁移到 profile entry 配置,之后配置入口有两个:
+
+1. **设置页**(推荐):插件装载后 DSH 会按 `Config` 自动生成本插件的配置表单
+   (字段全部 volatile,改动**热生效、无需重启**)。
+2. **profile 组合文件** `~/.dsh/profiles/<name>/cordis.patch.yml`:
 
 ```yaml
-llm-codex:
-  proxy: http://127.0.0.1:7890
+- id: llm-codex
+  name: dsh-llm-codex
+  config:
+    proxy: http://127.0.0.1:7890
 ```
 
 也可用环境变量 `HTTPS_PROXY`(优先级:显式 `proxy` 配置 > `HTTPS_PROXY` >
 `HTTP_PROXY`;`NO_PROXY` 命中的主机直连)。其他可选字段:`clientVersion`(默认
-`0.144.1`)、`writeBack`(默认 `true`)、`authFile`、`modelsCacheFile`、
-`staticModels`(显式模型目录)。设置段热更新,无需重启。
+`0.160.1`)、`writeBack`(默认 `true`)、`streamIdleTimeoutMs`、`authFile`、
+`modelsCacheFile`、`staticModels`(显式模型目录)。
 
-选用 codex 作为默认模型(settings.yaml):
+选用 codex 作为默认模型(`cordis.patch.yml`):
 
 ```yaml
-agent-default-model:
-  provider: codex
-  model: gpt-5.6-sol
-  reasoningEffort: medium
+- id: agent-default-model
+  name: "@deepseek-ai/dsh-agent-default-model"
+  config:
+    provider: codex
+    model: gpt-6.1-sol
+    reasoningEffort: medium
 ```
 
 ## 发布到 npm(dsh 插件库)
@@ -159,10 +186,11 @@ patch 文件只含插件行,不含任何机器相关的配置。
 ## 测试
 
 ```powershell
-npm test                              # 无凭证单元测试
-npm run test:smoke                    # 文本对话(默认模型 gpt-5.6-sol)
+npm test                              # 序列化单元测试 + 0.2.0 装载契约测试
+npm run test:smoke                    # 文本对话(默认模型 gpt-6.1-sol)
 npm run test:smoke -- gpt-5.5         # 指定模型
-npm run test:smoke -- gpt-5.6-sol --tools   # 额外验证工具调用路径
+npm run test:smoke -- gpt-6.1-sol --tools   # 额外验证工具调用路径
+npm run test:probe                    # client_version 门控探针 + 最小流式对话
 ```
 
 冒烟测试输出凭证形态、模型目录(实时拉取)、一次真实流式对话的结果与 usage。
@@ -179,7 +207,9 @@ npm run test:smoke -- gpt-5.6-sol --tools   # 额外验证工具调用路径
 | HTTP 429 | 订阅额度/限流,稍后重试 |
 | `INVALID_REQUEST:System messages are not allowed` | 系统提示已自动改走 `instructions` 字段,不应出现;如出现请升级插件 |
 | `INVALID_REQUEST:Unsupported parameter` | 订阅后端拒绝 `max_output_tokens`/`temperature`/`stop`,适配器已自动剥离;如仍出现请升级插件 |
-| 模型列表为空 | 实时发现失败且本地无 models_cache.json 时使用内置静态列表 |
+| `The 'gpt-6.1-sol' model is not supported … ChatGPT account` | `client_version` 太旧被服务端门控;升级插件(默认已 0.160.1)或把 `clientVersion` 配成与本机 codex 一致的版本 |
+| 模型列表只有旧模型(gpt-5.6 系) | 实时发现被 0.144.1 旧版本头门控;同上调整 `clientVersion` |
+| 模型列表为空 | 实时发现失败且 models_cache.json 不可读时使用内置静态列表 |
 
 ## 注意事项
 
