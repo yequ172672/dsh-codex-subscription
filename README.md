@@ -91,21 +91,43 @@ test/smoke.mjs      端到端冒烟测试(只读,绝不写 auth.json)
 3. **已登录 Codex CLI**:`codex login`(插件直接复用其凭证,无需 API Key)。
 4. **能访问 chatgpt.com**(国内网络通常需要代理,见下文"机器相关配置")。
 
-### DSH 版本兼容性
+### DSH 版本兼容性与发布 tag
 
-当前迁移分支与发布基线面向 DSH `0.2.0-rc.2`：
+当前 `0.2.x` 发布线面向 DSH `0.2.0-rc.2`：
 
-- `@deepseek-ai/dsh-llm`、`@deepseek-ai/dsh-settings`、`@deepseek-ai/dsh-timeout` 使用 `0.2.0-rc.2` 兼容范围。
+- `dsh-llm-codex@0.2.x` 兼容 DSH `0.2.0-rc.2` 系列，当前修复版为 `0.2.1`。
+- `@deepseek-ai/dsh-llm`、`@deepseek-ai/dsh-settings`、`@deepseek-ai/dsh-timeout` 使用 DSH 0.2 兼容范围。
 - 插件使用 DSH 0.2 的 Config 生命周期，不再调用已移除的 `settings.installSection()`。
 - 适配器实现 `prepareCall()` 配置代次绑定，避免热更新期间混用旧模型元数据和新 transport。
-- 旧 DSH `0.1.x` 请继续使用对应历史插件版本，不要用本分支构建包强行覆盖旧运行时。
+- 该发布线**不兼容 DSH `0.1.x`**；使用 DSH 0.1 的用户应继续安装对应历史插件版本，例如 `dsh-llm-codex@0.1.7`。
+
+建议用 Git tag 区分宿主兼容线，并在生产 profile 中固定版本：
+
+| 插件 tag / 版本 | DSH 宿主 | 说明 |
+| --- | --- | --- |
+| `v0.1.7` 或其他 `v0.1.x` | DSH `0.1.x` | 历史兼容线 |
+| `v0.2.1` 或其他 `v0.2.x` | DSH `0.2.0-rc.2` 系列 | 当前兼容线 |
+
+Tag 只使用插件自身版本号（例如 `v0.2.1`），不要把 DSH 版本拼进 tag 名；具体宿主兼容关系写在 README、CHANGELOG 和 GitHub Release 中。发布新 DSH 兼容线时，使用新的插件 minor 线或 major 线，不要覆盖旧 tag。
 
 ### 安装插件
 
-安装已发布的包:
+安装当前 DSH 0.2 兼容线的精确 npm 版本:
 
 ```powershell
-dsh plugin --profile web add dsh-llm-codex
+dsh plugin --profile web add dsh-llm-codex@0.2.1
+```
+
+也可以固定 GitHub tag（仓库已 push 对应 tag 后使用）:
+
+```powershell
+dsh plugin --profile web add github:1321928757/dsh-codex-subscription#v0.2.1
+```
+
+如果宿主仍是 DSH 0.1.x，请不要执行上面的命令，改用对应历史版本:
+
+```powershell
+dsh plugin --profile web add dsh-llm-codex@0.1.7
 ```
 
 本地开发直接加路径(pnpm 会以 `link:` 链接,改动即时生效):
@@ -119,20 +141,20 @@ dsh plugin --profile web add D:\CODE\dsh\dsh-llm-codex
 自动成为 profile 层,`update` 时新版本获得 bundle 声明也会自动激活,`remove` 后自动
 移除。**无需手工编辑 cordis.patch.yml。**
 
-> 💡 **版本范围建议**:请用**不带版本号**的方式安装(`add dsh-llm-codex`),pnpm 会保存
-> `^x.y.z` 范围,之后的 `dsh plugin update` 能自动收取更新。若 profile 里依赖被写成
-> 精确版本(例如 `"dsh-llm-codex": "0.1.0"`,常见于从本地 `link:` 依赖切换或显式指定
-> 版本号的情况),`update` 会显示 "Already up to date" 而不会升级;重新执行一次不带
-> 版本号的 `add` 即可回到范围跟踪。另外,刚发布的新版本可能触发 pnpm 的
-> `minimumReleaseAge` 供应链策略(写入 pnpm-workspace.yaml 的排除清单或短暂提示),
-> 属正常现象。
+> 💡 **版本范围建议**:如果你希望自动接收同一兼容线的补丁更新，可以使用不带版本号的
+> `add dsh-llm-codex`；但 DSH 0.1/0.2 存在删除式 API 不兼容，跨兼容线升级前必须先确认宿主版本。
+> 生产环境更建议固定 `dsh-llm-codex@0.2.1` 或 `#v0.2.1`，避免未来自动更新跨越宿主兼容边界。
+> 若 profile 里依赖被写成精确版本，`dsh plugin update` 可能显示 "Already up to date"；重新执行
+> 精确版本的 `add` 即可切换到目标版本。另外，刚发布的新版本可能触发 pnpm 的
+> `minimumReleaseAge` 供应链策略（写入 pnpm-workspace.yaml 的排除清单或短暂提示），属正常现象。
 
-如果从 `0.1.2` 或更早版本升级，旧版本可能已经在 profile 中安装了
-`@deepseek-ai/dsh-llm@0.1.0-rc.6`。建议先移除旧插件，再安装新版本，避免旧依赖残留：
+如果从 DSH 0.1 兼容线迁移到 DSH 0.2，旧版本可能已经在 profile 中安装了
+`@deepseek-ai/dsh-llm@0.1.x`。这是一次宿主 API 兼容线迁移，建议先移除旧插件，再安装精确的
+`0.2.x` 版本，避免旧依赖残留：
 
 ```powershell
 dsh plugin --profile web remove dsh-llm-codex
-dsh plugin --profile web add dsh-llm-codex
+dsh plugin --profile web add dsh-llm-codex@0.2.1
 ```
 
 验证组合结果(不启动服务):

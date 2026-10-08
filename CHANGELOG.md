@@ -5,6 +5,7 @@
 - 修复 DSH 0.2 `AttachmentStore.readImageRequest()` 参数不兼容：改为传入具体的 `width`、`height` 和 `maxBytes`，不再传旧式 `maxPixels`。
 - 按图片原始尺寸和像素预算计算保持纵横比的请求图片目标。
 - 增加大图投影尺寸回归测试；现有文本、工具、Fast、OAuth、错误和生命周期测试继续覆盖。
+- 该版本属于 DSH 0.2 兼容线，建议使用 Git tag `v0.2.1` 固定安装；不兼容 DSH 0.1.x。
 
 ## 0.2.0 — DSH 0.2 migration
 
