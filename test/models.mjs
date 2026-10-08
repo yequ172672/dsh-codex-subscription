@@ -7,6 +7,11 @@ import { test } from 'node:test';
 import { CodexAdapter } from '../lib/adapter.js';
 import { buildCatalog, completeEntry, expandCatalogEntries } from '../lib/models.js';
 import { resolveWireModel } from '../lib/service-tier.js';
+import { DEFAULT_CODEX_CLIENT_VERSION } from '../lib/constants.js';
+
+test('default wire version is new enough for current GPT-6 Codex models', () => {
+  assert.equal(DEFAULT_CODEX_CLIENT_VERSION, '0.161.0');
+});
 
 test('catalog creates Fast rows only from explicit priority or legacy fast metadata', () => {
   const rows = expandCatalogEntries([

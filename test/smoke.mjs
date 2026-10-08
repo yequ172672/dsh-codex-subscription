@@ -14,6 +14,7 @@
 
 import { CodexAdapter } from '../lib/adapter.js';
 import { CodexCredentials } from '../lib/auth.js';
+import { DEFAULT_CODEX_CLIENT_VERSION } from '../lib/constants.js';
 
 const model = process.argv[2] ?? process.env.CODEX_SMOKE_MODEL ?? 'gpt-5.6-sol';
 const withTools = process.argv.includes('--tools');
@@ -22,7 +23,7 @@ const provider = 'codex';
 
 const config = {
   writeBack: false, // 冒烟测试绝不改写用户的 auth.json
-  clientVersion: '0.144.1',
+  clientVersion: process.env.CODEX_CLIENT_VERSION ?? DEFAULT_CODEX_CLIENT_VERSION,
   streamIdleTimeoutMs: 180_000,
 };
 const credentials = new CodexCredentials(() => config);

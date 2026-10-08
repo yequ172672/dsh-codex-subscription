@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.4 — GPT-6 model compatibility
+
+- 将默认 Codex wire `clientVersion` 从 `0.144.1` 更新为 `0.161.0`，与当前 Codex CLI `0.161.0` 对齐。
+- 已验证 `gpt-6-luna`：`0.144.1` 返回 ChatGPT account unsupported，`0.161.0` 和 `0.162.0` 均正常。
+- Codex `models_cache.json` 的 `client_version` 为 `0.162.0`，包含 `gpt-6-luna`；插件仍保留 `clientVersion` 配置覆盖，用于随 CLI 升级同步。
+- 更新模型目录说明和默认版本回归测试；真实验证覆盖 GPT-6 Luna 文本请求与工具往返。
+
 ## 0.2.3 — tool history and SSE hardening
 
 - 过滤孤立、重复和乱序的 `function_call_output`，并拒绝缺少 `toolCallId` 的旧版嵌入式 `tool-result`，避免历史污染再次触发 Codex 请求拒绝。

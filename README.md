@@ -45,7 +45,9 @@ Codex CLI(`codex login`)会把 ChatGPT 订阅的 OAuth 令牌写入 `~/.codex/au
   `auth.openai.com/oauth/token` 刷新并自动重试一次;刷新成功后默认**原子写回**
   auth.json(`writeBack: false` 可关闭),与 codex CLI 行为一致,两边凭证永远同步。
 - **模型目录**:优先实时拉取 `GET {base}/codex/models`,失败时回退
-  `~/.codex/models_cache.json`,再回退内置静态列表。明确支持 Fast 的模型会额外出现
+  `~/.codex/models_cache.json`,再回退内置静态列表。实时目录使用 `clientVersion` 作为
+  Codex wire 版本；该值需要与本机 Codex CLI 同步，否则新模型可能出现在缓存中但被
+  ChatGPT 后端以「model is not supported」拒绝。明确支持 Fast 的模型会额外出现
   `base-model-fast` synthetic 行；该行在上游请求中使用基础模型 ID 与顶层
   `service_tier: "priority"`，不会把 `-fast` picker ID 发给上游。
 - **Fast 能力识别**:优先识别目录 `service_tiers[].id === "priority"`;旧目录的
@@ -97,7 +99,7 @@ test/smoke.mjs      端到端冒烟测试(只读,绝不写 auth.json;--tools / -
 
 当前 `0.2.x` 发布线面向 DSH `0.2.0-rc.2`：
 
-- `dsh-llm-codex@0.2.x` 兼容 DSH `0.2.0-rc.2` 系列，当前修复版为 `0.2.3`。
+- `dsh-llm-codex@0.2.x` 兼容 DSH `0.2.0-rc.2` 系列，当前修复版为 `0.2.4`。
 - `@deepseek-ai/dsh-llm`、`@deepseek-ai/dsh-settings`、`@deepseek-ai/dsh-timeout` 使用 DSH 0.2 兼容范围。
 - 插件使用 DSH 0.2 的 Config 生命周期，不再调用已移除的 `settings.installSection()`。
 - 适配器实现 `prepareCall()` 配置代次绑定，避免热更新期间混用旧模型元数据和新 transport。
@@ -108,7 +110,7 @@ test/smoke.mjs      端到端冒烟测试(只读,绝不写 auth.json;--tools / -
 | 插件 tag / 版本 | DSH 宿主 | 说明 |
 | --- | --- | --- |
 | `v0.1.7` 或其他 `v0.1.x` | DSH `0.1.x` | 历史兼容线 |
-| `v0.2.3` 或其他 `v0.2.x` | DSH `0.2.0-rc.2` 系列 | 当前兼容线 |
+| `v0.2.4` 或其他 `v0.2.x` | DSH `0.2.0-rc.2` 系列 | 当前兼容线 |
 
 Tag 只使用插件自身版本号（例如 `v0.2.1`），不要把 DSH 版本拼进 tag 名；具体宿主兼容关系写在 README、CHANGELOG 和 GitHub Release 中。发布新 DSH 兼容线时，使用新的插件 minor 线或 major 线，不要覆盖旧 tag。
 
@@ -117,13 +119,13 @@ Tag 只使用插件自身版本号（例如 `v0.2.1`），不要把 DSH 版本�
 安装当前 DSH 0.2 兼容线的精确 npm 版本:
 
 ```powershell
-dsh plugin --profile web add dsh-llm-codex@0.2.3
+dsh plugin --profile web add dsh-llm-codex@0.2.4
 ```
 
 也可以固定 GitHub tag（仓库已 push 对应 tag 后使用）:
 
 ```powershell
-dsh plugin --profile web add github:1321928757/dsh-codex-subscription#v0.2.3
+dsh plugin --profile web add github:1321928757/dsh-codex-subscription#v0.2.4
 ```
 
 如果宿主仍是 DSH 0.1.x，请不要执行上面的命令，改用对应历史版本:
@@ -145,7 +147,7 @@ dsh plugin --profile web add D:\CODE\dsh\dsh-llm-codex
 
 > 💡 **版本范围建议**:如果你希望自动接收同一兼容线的补丁更新，可以使用不带版本号的
 > `add dsh-llm-codex`；但 DSH 0.1/0.2 存在删除式 API 不兼容，跨兼容线升级前必须先确认宿主版本。
-> 生产环境更建议固定 `dsh-llm-codex@0.2.3` 或 `#v0.2.3`，避免未来自动更新跨越宿主兼容边界。
+> 生产环境更建议固定 `dsh-llm-codex@0.2.4` 或 `#v0.2.4`，避免未来自动更新跨越宿主兼容边界。
 > 若 profile 里依赖被写成精确版本，`dsh plugin update` 可能显示 "Already up to date"；重新执行
 > 精确版本的 `add` 即可切换到目标版本。另外，刚发布的新版本可能触发 pnpm 的
 > `minimumReleaseAge` 供应链策略（写入 pnpm-workspace.yaml 的排除清单或短暂提示），属正常现象。
@@ -156,7 +158,7 @@ dsh plugin --profile web add D:\CODE\dsh\dsh-llm-codex
 
 ```powershell
 dsh plugin --profile web remove dsh-llm-codex
-dsh plugin --profile web add dsh-llm-codex@0.2.3
+dsh plugin --profile web add dsh-llm-codex@0.2.4
 ```
 
 验证组合结果(不启动服务):
@@ -182,7 +184,7 @@ llm-codex:
 
 也可用环境变量 `HTTPS_PROXY`(优先级:显式 `proxy` 配置 > `HTTPS_PROXY` >
 `HTTP_PROXY`;`NO_PROXY` 命中的主机直连)。其他可选字段:`clientVersion`(默认
-`0.144.1`)、`writeBack`(默认 `true`)、`authFile`、`modelsCacheFile`、
+`0.161.0`)、`writeBack`(默认 `true`)、`authFile`、`modelsCacheFile`、
 `staticModels`(显式模型目录)。图片请求还可配置:
 
 ```yaml
@@ -327,5 +329,5 @@ npm run test:smoke -- gpt-5.6-luna --roundtrip  # 工具往返:tool-call + role=
   中优先省略较早图片,不修改原始会话记录。
 - 订阅额度由 OpenAI 按账号计量,与 codex CLI 共用同一配额。Fast 会产生更高的 service-tier
   费用/配额消耗；请求 Fast 不保证实际使用 Fast，服务端可能返回 `default`。默认
-  `clientVersion: 0.144.1` 保持不变；Fast 依赖的 Codex/OpenAI 动态协议应在发布前绑定
+  `clientVersion: 0.161.0` 与当前 Codex CLI 对齐；Fast 依赖的 Codex/OpenAI 动态协议应在发布前绑定
   具体 commit 或 spec 版本，不能把 GitHub main 的未来字段视为稳定保证。
