@@ -91,18 +91,36 @@ test('normalizes forbidden call ID characters deterministically', () => {
   assert.match(normalized, /^[a-zA-Z0-9_-]+$/);
 });
 
+test('projects large images to DSH 0.2 width and height targets', async () => {
+  const attachment = {
+    attachmentId: 'large-image',
+    mediaType: 'image/png',
+    bytes: 100,
+    width: 4000,
+    height: 2000,
+  };
+  let policy;
+  await serializeMessages(
+    [{ role: 'user', content: [{ type: 'image', attachment }] }],
+    [],
+    { readImageRequest: async (_ref, target) => { policy = target; return { ...attachment, data: new Uint8Array([1]) }; } },
+    { requestImagePixelBudget: 1_000_000, requestImageMaxBytes: 500_000 },
+  );
+  assert.deepEqual(policy, { width: 1414, height: 707, maxBytes: 500_000 });
+});
+
 test('serializes user images as Responses input_image blocks', async () => {
   const attachment = {
     attachmentId: 'sha256:image-1',
     mediaType: 'image/png',
     bytes: 3,
-    width: 1,
-    height: 1,
+    width: 1000,
+    height: 500,
   };
   const attachments = {
     async readImageRequest(ref, policy, signal) {
       assert.equal(ref, attachment);
-      assert.deepEqual(policy, { maxPixels: 4194304, maxBytes: 1048576 });
+      assert.deepEqual(policy, { width: 1000, height: 500, maxBytes: 1048576 });
       assert.equal(signal.aborted, false);
       return { ...attachment, data: new Uint8Array([1, 2, 3]) };
     },
@@ -140,8 +158,8 @@ test('rejects images in assistant history', async () => {
 });
 
 test('offloads older images without mutating the source messages', async () => {
-  const oldImage = Object.freeze({ attachmentId: 'old', mediaType: 'image/png', bytes: 9 });
-  const currentImage = Object.freeze({ attachmentId: 'current', mediaType: 'image/jpeg', bytes: 3 });
+  const oldImage = Object.freeze({ attachmentId: 'old', mediaType: 'image/png', bytes: 9, width: 10, height: 10 });
+  const currentImage = Object.freeze({ attachmentId: 'current', mediaType: 'image/jpeg', bytes: 3, width: 10, height: 10 });
   const messages = Object.freeze([
     Object.freeze({ role: 'user', content: Object.freeze([{ type: 'image', attachment: oldImage }]) }),
     Object.freeze({ role: 'user', content: Object.freeze([{ type: 'image', attachment: currentImage }]) }),
@@ -175,7 +193,7 @@ test('reports safe request serialization failures without body contents', () => 
 });
 
 test('serializes images nested in tool results', async () => {
-  const attachment = { attachmentId: 'tool-image', mediaType: 'image/webp', bytes: 2 };
+  const attachment = { attachmentId: 'tool-image', mediaType: 'image/webp', bytes: 2, width: 1, height: 1 };
   const result = await serializeMessages(
     [
       {

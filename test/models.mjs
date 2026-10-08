@@ -125,8 +125,50 @@ test('unknown Fast model resolves with safe defaults without catalog advertiseme
   assert.equal(resolved.inputModalities[0], 'text');
 });
 
+test('prepared calls retain one configuration generation across model resolution and dispatch', async () => {
+  const generations = [
+    { clientVersion: 'old', proxy: 'http://old.test', streamIdleTimeoutMs: 1000 },
+    { clientVersion: 'new', proxy: 'http://new.test', streamIdleTimeoutMs: 1000 },
+  ];
+  let generation = 0;
+  const transports = [];
+  const credentials = {
+    current: async (config) => ({ mode: 'chatgpt', accessToken: config.clientVersion, baseURL: 'https://chatgpt.test' }),
+  };
+  const adapter = new CodexAdapter({
+    options: () => generations[generation],
+    credentials,
+    transport: async (config) => {
+      transports.push(config.clientVersion);
+      return {
+        fetch: async (_url, init) => new Response(
+          'data: {"type":"response.output_text.delta","item_id":"msg","delta":"ok"}\n\ndata: {"type":"response.completed","response":{}}\n\n',
+          { headers: { 'content-type': 'text/event-stream' } },
+        ),
+      };
+    },
+  });
+
+  const prepared = await adapter.prepareCall('codex', 'known', undefined);
+  generation = 1;
+  const chunks = [];
+  for await (const chunk of prepared.stream({
+    provider: 'codex',
+    model: 'known',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'x' }] }],
+  })) chunks.push(chunk);
+
+  assert.deepEqual(transports, ['old']);
+  assert.equal(chunks.at(-1).type, 'finish');
+  assert.equal(chunks.at(-1).reason.kind, 'stop');
+
+  const next = await adapter.prepareCall('codex', 'known', undefined);
+  assert.equal(next.model.id, 'known');
+  assert.equal(transports.at(-1), 'new');
+});
+
 test('request sends image input to the existing Codex Responses endpoint', async () => {
-  const attachment = { attachmentId: 'request-image', mediaType: 'image/png', bytes: 1 };
+  const attachment = { attachmentId: 'request-image', mediaType: 'image/png', bytes: 1, width: 1, height: 1 };
   let request;
   const adapter = new CodexAdapter({
     options: () => ({ clientVersion: 'test', requestImagePixelBudget: 16, requestImageMaxBytes: 16 }),

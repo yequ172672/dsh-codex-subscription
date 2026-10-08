@@ -1,6 +1,6 @@
 # dsh-llm-codex
 
-> 📦 已发布到 npm:[dsh-llm-codex@0.1.6](https://www.npmjs.com/package/dsh-llm-codex)
+> 📦 发布包名:[dsh-llm-codex](https://www.npmjs.com/package/dsh-llm-codex) · 当前分支适配 DSH `0.2.0-rc.2`
 > · 📚 GitHub:[yequ172672/dsh-codex-subscription](https://github.com/yequ172672/dsh-codex-subscription)
 > · 🏷️ 属于 [dsh-plugin](https://github.com/topics/dsh-plugin) 插件话题
 
@@ -59,7 +59,7 @@ Codex CLI(`codex login`)会把 ChatGPT 订阅的 OAuth 令牌写入 `~/.codex/au
 ```
 lib/
   provider-error.js  统一上游错误提取、分类、脱敏与诊断
-  index.js      插件入口(注册 provider "codex" + 可配置 provider 目录 + 设置段)
+  index.js      插件入口(注册 provider "codex" + 可配置 provider 目录 + DSH 0.2 Config)
   adapter.js    CodexAdapter:fetch + SSE → StreamChunk(仿 dsh-llm-deepseek)
   auth.js       auth.json 读取 / 订阅令牌刷新 / 原子写回
   serialize.js  harness 消息 → Responses API 请求体
@@ -93,10 +93,12 @@ test/smoke.mjs      端到端冒烟测试(只读,绝不写 auth.json)
 
 ### DSH 版本兼容性
 
-从 `0.1.3` 开始，DSH 核心包作为宿主 peer dependency 使用，不再在插件中固定安装
-`@deepseek-ai/dsh-llm`、`@deepseek-ai/dsh-settings` 和 `@deepseek-ai/dsh-timeout` 的旧版本。
-`dsh-llm-codex@0.1.7` 兼容 DSH `0.1.2-rc.1` 至 `0.1.x` 的 `0.1.2` 系列版本；
-旧版 DSH 请继续使用 `dsh-llm-codex@0.1.6`。
+当前迁移分支与发布基线面向 DSH `0.2.0-rc.2`：
+
+- `@deepseek-ai/dsh-llm`、`@deepseek-ai/dsh-settings`、`@deepseek-ai/dsh-timeout` 使用 `0.2.0-rc.2` 兼容范围。
+- 插件使用 DSH 0.2 的 Config 生命周期，不再调用已移除的 `settings.installSection()`。
+- 适配器实现 `prepareCall()` 配置代次绑定，避免热更新期间混用旧模型元数据和新 transport。
+- 旧 DSH `0.1.x` 请继续使用对应历史插件版本，不要用本分支构建包强行覆盖旧运行时。
 
 ### 安装插件
 
@@ -139,7 +141,9 @@ dsh plugin --profile web add dsh-llm-codex
 dsh --profile web --dump-config   # 应看到 "# == dsh-llm-codex" 与 llm-codex 行
 ```
 
-重启 dsh 后,Web 模型选择器出现 **Codex (ChatGPT 订阅)** provider,插件清单页
+在正式安装前，建议使用单独的 DSH 0.2 profile/home 验证 bundle 和 provider；不要把迁移测试指向已有的 Web 实例，也不要为测试重启当前会话的 `http://127.0.0.1:3080`。真实网络冒烟应显式使用 `writeBack: false`，并确认测试 profile 与当前 profile 不同。
+
+独立实例通过验证后，Web 模型选择器应出现 **Codex (ChatGPT 订阅)** provider，插件清单页
 (设置 → 插件)也会列出 `llm-codex` 条目。
 
 ## 机器相关配置(settings.yaml,不进包)
