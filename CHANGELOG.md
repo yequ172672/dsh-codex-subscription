@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.3 — tool history and SSE hardening
+
+- 过滤孤立、重复和乱序的 `function_call_output`，并拒绝缺少 `toolCallId` 的旧版嵌入式 `tool-result`，避免历史污染再次触发 Codex 请求拒绝。
+- 修复嵌套 text-only 工具结果被错误降级为 `(no output)`；新增孤立输出、重复输出和安全诊断计数。
+- 加固 Responses SSE 工具事件：支持 `function_call_arguments.done`，去重完整参数，补全 `output_item.done` 携带的 arguments，兼容 item id/call id 差异，校验缺失 id。
+- 修复混合文本/工具响应错误返回 `stop`、`response.incomplete` 嵌套 reason 未识别、tool-call 诊断按 delta 而非调用计数等问题；保留 incomplete usage/service tier 元数据。
+- 确保注入的 `fetchImpl` 同时用于 Codex 请求和凭证刷新，并防止未传 signal 时遮蔽原始传输错误。
+- 新增多工具、图片、多工具往返真实回归验证；单元回归从 53 条扩展至 60 条。
+
+## 0.2.2 — DSH 0.2 tool-result message fix
+
+- **修复工具调用必然失败**:DSH 0.2 把工具结果提升为 `role: 'tool'` 的一等消息(`toolCallId` + `content`),而适配器此前只认 DSH 0.1 的「user 消息内嵌 `tool-result` 块」。结果是工具输出被当作普通 user 文本发出,请求里只有 `function_call` 而没有配对的 `function_call_output`;Codex 后端以**流内第一个事件**就是 `error` 的方式拒绝整个请求:`No tool output found for function call …`。现在 `role: 'tool'` 消息正确映射为 `function_call_output`,call id 仍经 `normalizeCallId` 保证与 `function_call` 配对一致。
+- 保留 DSH 0.1 的 `tool-result` 块路径,两种历史形状都能序列化。
+- 允许 `role: 'tool'` 结果消息携带图片(截图类工具);此前会被 `UNSUPPORTED_CONTENT` 误拒。`system`/`developer`/`assistant` 历史图片仍明确拒绝。
+- DSH 0.2 的 `developer` 消息只剥离 `tool-addition` / `tool-removal` 声明块(本适配器每次请求下发完整工具表),其余正文不丢。
+- 新增孤儿工具调用兜底:历史里出现没有结果配对的 `function_call`(工具未执行完、回合中断、上下文压缩丢弃结果)时丢弃该调用,而不是让整个会话被后端 400 永久锁死;诊断中新增 `orphanedToolCalls` 计数。
+- 测试新增 10 条序列化用例(0.2 tool 消息配对、工具结果图片、空输出、developer 消息、孤儿调用、诊断计数),并在 `test/smoke.mjs --roundtrip` 增加真实凭证的工具往返回归 —— 该用例在修复前必然失败。
+- 该版本属于 DSH 0.2 兼容线,建议使用 Git tag `v0.2.2` 固定安装;不兼容 DSH 0.1.x。
+
 ## 0.2.1 — DSH 0.2 image attachment fix
 
 - 修复 DSH 0.2 `AttachmentStore.readImageRequest()` 参数不兼容：改为传入具体的 `width`、`height` 和 `maxBytes`，不再传旧式 `maxPixels`。

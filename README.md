@@ -52,7 +52,9 @@ Codex CLI(`codex login`)会把 ChatGPT 订阅的 OAuth 令牌写入 `~/.codex/au
   `additional_speed_tiers: ["fast"]` 作为兼容回退。仅有未知 tier（例如 `ultrafast`）或
   名称包含 Fast 不会自动生成 Fast 行。Fast 是 service tier，不是 reasoning effort。
 - **协议**:OpenAI Responses API(`stream: true` SSE),推理摘要、正文、工具调用分别映射为
-  DSH 的 reasoning / text / tool-call 块,usage 从 `response.completed` 提取。
+  DSH 的 reasoning / text / tool-call 块,usage 从 `response.completed` 提取。工具结果按
+  历史形状映射为 `function_call_output`:DSH 0.2 的 `role: 'tool'` 一等消息(`toolCallId`),
+  以及 DSH 0.1 兼容的「user 消息内嵌 `tool-result` 块」。
 
 ## 目录结构
 
@@ -73,7 +75,7 @@ test/serialize.mjs  请求序列化单元测试
 test/models.mjs     模型能力目录与适配器能力单元测试
 test/index.mjs      单元测试入口(避免 Windows 测试运行器额外 spawn)
  test/errors.mjs      HTTP/SSE 错误提取、分类与脱敏测试
-test/smoke.mjs      端到端冒烟测试(只读,绝不写 auth.json)
+test/smoke.mjs      端到端冒烟测试(只读,绝不写 auth.json;--tools / --roundtrip)
 ```
 
 ## 安装(dsh 官方插件命令)
@@ -95,7 +97,7 @@ test/smoke.mjs      端到端冒烟测试(只读,绝不写 auth.json)
 
 当前 `0.2.x` 发布线面向 DSH `0.2.0-rc.2`：
 
-- `dsh-llm-codex@0.2.x` 兼容 DSH `0.2.0-rc.2` 系列，当前修复版为 `0.2.1`。
+- `dsh-llm-codex@0.2.x` 兼容 DSH `0.2.0-rc.2` 系列，当前修复版为 `0.2.3`。
 - `@deepseek-ai/dsh-llm`、`@deepseek-ai/dsh-settings`、`@deepseek-ai/dsh-timeout` 使用 DSH 0.2 兼容范围。
 - 插件使用 DSH 0.2 的 Config 生命周期，不再调用已移除的 `settings.installSection()`。
 - 适配器实现 `prepareCall()` 配置代次绑定，避免热更新期间混用旧模型元数据和新 transport。
@@ -106,7 +108,7 @@ test/smoke.mjs      端到端冒烟测试(只读,绝不写 auth.json)
 | 插件 tag / 版本 | DSH 宿主 | 说明 |
 | --- | --- | --- |
 | `v0.1.7` 或其他 `v0.1.x` | DSH `0.1.x` | 历史兼容线 |
-| `v0.2.1` 或其他 `v0.2.x` | DSH `0.2.0-rc.2` 系列 | 当前兼容线 |
+| `v0.2.3` 或其他 `v0.2.x` | DSH `0.2.0-rc.2` 系列 | 当前兼容线 |
 
 Tag 只使用插件自身版本号（例如 `v0.2.1`），不要把 DSH 版本拼进 tag 名；具体宿主兼容关系写在 README、CHANGELOG 和 GitHub Release 中。发布新 DSH 兼容线时，使用新的插件 minor 线或 major 线，不要覆盖旧 tag。
 
@@ -115,13 +117,13 @@ Tag 只使用插件自身版本号（例如 `v0.2.1`），不要把 DSH 版本�
 安装当前 DSH 0.2 兼容线的精确 npm 版本:
 
 ```powershell
-dsh plugin --profile web add dsh-llm-codex@0.2.1
+dsh plugin --profile web add dsh-llm-codex@0.2.3
 ```
 
 也可以固定 GitHub tag（仓库已 push 对应 tag 后使用）:
 
 ```powershell
-dsh plugin --profile web add github:1321928757/dsh-codex-subscription#v0.2.1
+dsh plugin --profile web add github:1321928757/dsh-codex-subscription#v0.2.3
 ```
 
 如果宿主仍是 DSH 0.1.x，请不要执行上面的命令，改用对应历史版本:
@@ -143,7 +145,7 @@ dsh plugin --profile web add D:\CODE\dsh\dsh-llm-codex
 
 > 💡 **版本范围建议**:如果你希望自动接收同一兼容线的补丁更新，可以使用不带版本号的
 > `add dsh-llm-codex`；但 DSH 0.1/0.2 存在删除式 API 不兼容，跨兼容线升级前必须先确认宿主版本。
-> 生产环境更建议固定 `dsh-llm-codex@0.2.1` 或 `#v0.2.1`，避免未来自动更新跨越宿主兼容边界。
+> 生产环境更建议固定 `dsh-llm-codex@0.2.3` 或 `#v0.2.3`，避免未来自动更新跨越宿主兼容边界。
 > 若 profile 里依赖被写成精确版本，`dsh plugin update` 可能显示 "Already up to date"；重新执行
 > 精确版本的 `add` 即可切换到目标版本。另外，刚发布的新版本可能触发 pnpm 的
 > `minimumReleaseAge` 供应链策略（写入 pnpm-workspace.yaml 的排除清单或短暂提示），属正常现象。
@@ -154,7 +156,7 @@ dsh plugin --profile web add D:\CODE\dsh\dsh-llm-codex
 
 ```powershell
 dsh plugin --profile web remove dsh-llm-codex
-dsh plugin --profile web add dsh-llm-codex@0.2.1
+dsh plugin --profile web add dsh-llm-codex@0.2.3
 ```
 
 验证组合结果(不启动服务):
@@ -284,8 +286,13 @@ Codex provider error; provider=codex; status=400; code=context_length_exceeded; 
 npm test                              # 无凭证单元测试
 npm run test:smoke                    # 文本对话(默认模型 gpt-5.6-sol)
 npm run test:smoke -- gpt-5.5         # 指定模型
-npm run test:smoke -- gpt-5.6-sol --tools   # 额外验证工具调用路径
+npm run test:smoke -- gpt-5.6-sol --tools       # 额外验证工具调用路径
+npm run test:smoke -- gpt-5.6-luna --roundtrip  # 工具往返:tool-call + role='tool' 结果
 ```
+
+`--roundtrip` 会把上一轮的 `tool-call` 与 DSH 0.2 的 `role='tool'` 结果一起发回后端,
+因此能直接抓住「`function_call` 与 `function_call_output` 未配对」这类回归(缺失时后端
+以 `No tool output found for function call …` 拒绝请求)。
 
 冒烟测试输出凭证形态、模型目录(实时拉取)、一次真实流式对话的结果与 usage。
 测试默认只读(`writeBack: false`),绝不改写 auth.json;需要走代理时设置
@@ -301,6 +308,7 @@ npm run test:smoke -- gpt-5.6-sol --tools   # 额外验证工具调用路径
 | HTTP 429 | 显示 `RATE_LIMIT` 与上游摘要,由 Harness 外层策略处理限流;若明确额度耗尽则显示 `QUOTA` |
 | HTTP 400 上下文超限 | 显示 `CONTEXT_WINDOW_EXCEEDED`、上游 code/message、request id 与安全 diagnostics,不会误报为普通 `provider error` |
 | `INVALID_REQUEST:System messages are not allowed` | 系统提示已自动改走 `instructions` 字段,不应出现;如出现请升级插件 |
+| SSE 首个事件即 `No tool output found for function call …` | DSH 0.2 的 `role='tool'` 结果消息未被识别成 `function_call_output`;升级到 `0.2.2` 及以上 |
 | 其他 HTTP/SSE 上游错误 | 错误中保留 provider、status、code/type、message/detail、request id 与最多 4000 字符的脱敏 raw 摘要 |
 | `INVALID_REQUEST:Unsupported parameter` | 订阅后端拒绝 `max_output_tokens`/`temperature`/`stop`,适配器已自动剥离;如仍出现请升级插件 |
 | 模型列表为空 | 实时发现失败且本地无 models_cache.json 时使用内置静态列表 |
@@ -311,9 +319,9 @@ npm run test:smoke -- gpt-5.6-sol --tools   # 额外验证工具调用路径
   写回,设置 `writeBack: false`(届时过期令牌只在内存中刷新,重启 dsh 后重新刷新)。
 - 图片输入开放给配置为 `input: [text, image]` 的 `gpt-5.6-sol`、`gpt-5.6-terra` 和
   `gpt-5.6-luna`;图片通过
-  DSH 可选附件服务读取并转换为 Responses API 的 `input_image`。没有附件服务、
-  图片超出限制、或 system/assistant 历史消息包含图片时,适配器会以
-  `UNSUPPORTED_CONTENT` 明确拒绝,不会静默丢图。
+  DSH 可选附件服务读取并转换为 Responses API 的 `input_image`。工具结果消息(DSH 0.2 的
+  `role: 'tool'`)同样可以携带图片。没有附件服务、图片超出限制、或 `system`/`developer`/
+  `assistant` 历史消息包含图片时,适配器会以 `UNSUPPORTED_CONTENT` 明确拒绝,不会静默丢图。
 - 服务端可能仍拒绝图片参数;此时请移除该模型的 `image` 能力并开启新会话,因为
   原图片会保留在历史 session log 中。历史图片超出单次预算时,适配器只在当前请求
   中优先省略较早图片,不修改原始会话记录。

@@ -196,6 +196,7 @@ test('serializes images nested in tool results', async () => {
   const attachment = { attachmentId: 'tool-image', mediaType: 'image/webp', bytes: 2, width: 1, height: 1 };
   const result = await serializeMessages(
     [
+      { role: 'assistant', content: [{ type: 'tool-call', id: 'call_tool', name: 'screenshot', arguments: '{}' }] },
       {
         role: 'user',
         content: [
@@ -210,8 +211,173 @@ test('serializes images nested in tool results', async () => {
     [],
     { readImageRequest: async () => ({ ...attachment, data: new Uint8Array([255]) }) },
   );
-  assert.deepEqual(result[0].output, [
+  assert.deepEqual(result[1].output, [
     { type: 'input_text', text: '截图' },
     { type: 'input_image', detail: 'auto', image_url: 'data:image/webp;base64,/w==' },
   ]);
+});
+
+test('serializes DSH 0.2 tool-role messages as paired function_call_output', async () => {
+  const callId = 'call_abc123';
+  const result = await serializeMessages([
+    { role: 'system', content: [{ type: 'text', text: '你是助手' }] },
+    { role: 'user', content: [{ type: 'text', text: '查一下北京天气' }] },
+    { role: 'assistant', content: [{ type: 'tool-call', id: callId, name: 'get_weather', arguments: '{"city":"北京"}' }] },
+    { role: 'tool', toolCallId: callId, content: [{ type: 'text', text: '晴 26℃' }], isError: false },
+  ], []);
+  assert.deepEqual(result, [
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: '查一下北京天气' }] },
+    { type: 'function_call', call_id: callId, name: 'get_weather', arguments: '{"city":"北京"}' },
+    { type: 'function_call_output', call_id: callId, output: '晴 26℃' },
+  ]);
+});
+
+test('keeps DSH 0.2 tool ids stable through long foreign identifiers', async () => {
+  const longId = 'call_ff5c0df8e42749068c868bd1|fc_02178672417344200000000000000000000ffffac174e11519098';
+  const result = await serializeMessages([
+    { role: 'assistant', content: [{ type: 'tool-call', id: longId, name: 'run_code', arguments: '{}' }] },
+    { role: 'tool', toolCallId: longId, content: [{ type: 'text', text: 'ok' }] },
+  ], []);
+  assert.equal(result[0].call_id, result[1].call_id);
+  assert.equal(result[0].call_id.length, 64);
+  assert.match(result[0].call_id, /^[a-zA-Z0-9_-]+$/);
+});
+
+test('carries DSH 0.2 tool-role images as input_image output', async () => {
+  const callId = 'call_shot';
+  const attachment = { attachmentId: 'shot', mediaType: 'image/png', bytes: 2, width: 4, height: 4 };
+  const result = await serializeMessages(
+    [
+      { role: 'assistant', content: [{ type: 'tool-call', id: callId, name: 'screenshot', arguments: '{}' }] },
+      { role: 'tool', toolCallId: callId, content: [{ type: 'text', text: '截图' }, { type: 'image', attachment }] },
+    ],
+    [],
+    { readImageRequest: async () => ({ ...attachment, data: new Uint8Array([1, 2, 3]) }) },
+  );
+  assert.deepEqual(result[1], {
+    type: 'function_call_output',
+    call_id: callId,
+    output: [
+      { type: 'input_text', text: '截图' },
+      { type: 'input_image', detail: 'auto', image_url: 'data:image/png;base64,AQID' },
+    ],
+  });
+});
+
+test('renders an empty DSH 0.2 tool result as placeholder output', async () => {
+  const result = await serializeMessages([
+    { role: 'assistant', content: [{ type: 'tool-call', id: 'call_empty', name: 'noop', arguments: '{}' }] },
+    { role: 'tool', toolCallId: 'call_empty', content: [] },
+  ], []);
+  assert.equal(result[1].output, '(no output)');
+});
+
+test('drops DSH 0.2 developer tool-update blocks but keeps their other content', async () => {
+  const result = await serializeMessages([
+    { role: 'developer', content: [{ type: 'tool-addition', toolName: 'late_tool' }] },
+    { role: 'developer', content: [{ type: 'tool-removal', toolName: 'late_tool' }, { type: 'text', text: '补充说明' }] },
+    { role: 'user', content: [{ type: 'text', text: '继续' }] },
+  ], []);
+  assert.deepEqual(result, [
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: '补充说明' }] },
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: '继续' }] },
+  ]);
+});
+
+test('drops orphan function calls that no tool message answers', async () => {
+  const report = {};
+  const result = await serializeMessages(
+    [
+      { role: 'assistant', content: [{ type: 'text', text: '我先查一下' }, { type: 'tool-call', id: 'call_orphan', name: 't', arguments: '{}' }] },
+      { role: 'user', content: [{ type: 'text', text: '还在吗' }] },
+    ],
+    [],
+    undefined,
+    undefined,
+    undefined,
+    report,
+  );
+  assert.deepEqual(result, [
+    { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '我先查一下' }] },
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: '还在吗' }] },
+  ]);
+  assert.equal(report.orphanedToolCalls, 1);
+});
+
+test('keeps answered function calls while dropping only the orphaned ones', async () => {
+  const result = await serializeMessages([
+    { role: 'assistant', content: [{ type: 'tool-call', id: 'call_orphan', name: 'a', arguments: '{}' }] },
+    { role: 'assistant', content: [{ type: 'tool-call', id: 'call_paired', name: 'b', arguments: '{}' }] },
+    { role: 'tool', toolCallId: 'call_paired', content: [{ type: 'text', text: 'ok' }] },
+  ], []);
+  assert.deepEqual(result.map((item) => item.call_id ?? item.type), ['call_paired', 'call_paired']);
+  assert.equal(result[0].type, 'function_call');
+  assert.equal(result[1].type, 'function_call_output');
+});
+
+test('discards a DSH 0.2 tool result that carries no usable call id', async () => {
+  const report = {};
+  const result = await serializeMessages(
+    [
+      { role: 'assistant', content: [{ type: 'tool-call', id: 'call_real', name: 'b', arguments: '{}' }] },
+      { role: 'tool', content: [{ type: 'text', text: 'orphan result' }] },
+      { role: 'tool', toolCallId: 'call_real', content: [{ type: 'text', text: 'ok' }] },
+    ],
+    [],
+    undefined,
+    undefined,
+    undefined,
+    report,
+  );
+  assert.deepEqual(result.map((item) => item.call_id), ['call_real', 'call_real']);
+  assert.equal(report.orphanedToolCalls, 0);
+});
+
+test('drops orphan function outputs and malformed embedded tool results', async () => {
+  const report = {};
+  const result = await serializeMessages([
+    { role: 'tool', toolCallId: 'call_unmatched', content: [{ type: 'text', text: 'stale' }] },
+    { role: 'user', content: [{ type: 'tool-result', content: [{ type: 'text', text: 'missing id' }] }] },
+  ], [], undefined, undefined, undefined, report);
+  assert.deepEqual(result, []);
+  assert.equal(report.orphanedToolOutputs, 1);
+});
+
+test('drops duplicate and out-of-order tool outputs and reports diagnostics', async () => {
+  const report = {};
+  const result = await serializeMessages([
+    { role: 'tool', toolCallId: 'call_stale', content: [{ type: 'text', text: 'stale' }] },
+    { role: 'assistant', content: [{ type: 'tool-call', id: 'call_live', name: 'run', arguments: '{}' }] },
+    { role: 'tool', toolCallId: 'call_live', content: [{ type: 'text', text: 'first' }] },
+    { role: 'tool', toolCallId: 'call_live', content: [{ type: 'text', text: 'duplicate' }] },
+  ], [], undefined, undefined, undefined, report);
+  assert.deepEqual(result.map((item) => item.type), ['function_call', 'function_call_output']);
+  assert.equal(result[1].output, 'first');
+  assert.equal(report.orphanedToolOutputs, 1);
+  assert.equal(report.duplicateToolOutputs, 1);
+});
+
+test('serializes nested text-only tool output', async () => {
+  const result = await serializeMessages([
+    { role: 'assistant', content: [{ type: 'tool-call', id: 'call_nested', name: 'run', arguments: '{}' }] },
+    { role: 'tool', toolCallId: 'call_nested', content: [{ type: 'tool-result', toolCallId: 'inner', content: [{ type: 'text', text: 'nested text' }] }] },
+  ], []);
+  assert.equal(result[1].output, 'nested text');
+});
+
+test('reports orphaned tool calls, outputs, and duplicates in diagnostics facts', () => {
+  const withFacts = requestDiagnostics(
+    { messages: [] },
+    { input: [] },
+    '{}',
+    undefined,
+    { orphanedToolCalls: 2, orphanedToolOutputs: 3, duplicateToolOutputs: 4 },
+  );
+  assert.equal(withFacts.orphanedToolCalls, 2);
+  assert.equal(withFacts.orphanedToolOutputs, 3);
+  assert.equal(withFacts.duplicateToolOutputs, 4);
+  const withoutFacts = requestDiagnostics({ messages: [] }, { input: [] }, '{}');
+  assert.equal(Object.hasOwn(withoutFacts, 'orphanedToolCalls'), false);
+  assert.equal(Object.hasOwn(withoutFacts, 'orphanedToolOutputs'), false);
+  assert.equal(Object.hasOwn(withoutFacts, 'duplicateToolOutputs'), false);
 });

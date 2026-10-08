@@ -129,6 +129,63 @@ test('DSH BlockAssembler preserves response replay metadata', async () => {
   assert.equal(assembler.replayState.response.serviceTierStatus, 'downgraded');
 });
 
+test('translates complete tool calls, done-only arguments, and mixed completion', async () => {
+  const chunks = await collect(translate((async function* () {
+    yield JSON.stringify({ type: 'response.output_item.added', item: { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'run' } });
+    yield JSON.stringify({ type: 'response.function_call_arguments.done', item_id: 'fc_1', call_id: 'call_1', arguments: '{"x":1}' });
+    yield JSON.stringify({ type: 'response.output_item.done', item: { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'run', arguments: '{"x":1}' } });
+    yield JSON.stringify({ type: 'response.output_text.delta', item_id: 'msg', delta: 'done' });
+    yield JSON.stringify({ type: 'response.completed', response: {} });
+  })(), { model: 'm' }));
+  const tool = chunks.find((chunk) => chunk.type === 'block-end' && chunk.block?.type === 'tool-call');
+  const finish = chunks.find((chunk) => chunk.type === 'finish');
+  assert.deepEqual(tool.block, { type: 'tool-call', id: 'call_1', name: 'run', arguments: '{"x":1}' });
+  assert.equal(finish.reason.kind, 'tool-calls');
+  assert.equal(finish.reason.failure, undefined);
+});
+
+test('classifies nested incomplete max-token responses and keeps usage', async () => {
+  const chunks = await collect(translate((async function* () {
+    yield JSON.stringify({ type: 'response.incomplete', response: {
+      incomplete_details: { reason: 'max_output_tokens' },
+      usage: { input_tokens: 10, output_tokens: 3 },
+      service_tier: 'default',
+    } });
+  })(), { model: 'm', requestedServiceTier: 'priority' }));
+  assert.deepEqual(chunks.find((chunk) => chunk.type === 'usage').usage, { inputTokens: 10, outputTokens: 3 });
+  const finish = chunks.find((chunk) => chunk.type === 'finish');
+  assert.equal(finish.reason.kind, 'max-tokens');
+  assert.equal(finish.replayState.response.actualServiceTier, 'default');
+});
+
+test('counts one tool call across multiple argument deltas and rejects malformed ids', async () => {
+  const chunks = await collect(translate((async function* () {
+    yield JSON.stringify({ type: 'response.output_item.added', item: { type: 'function_call', id: 'fc_2', call_id: 'call_2', name: 'run' } });
+    yield JSON.stringify({ type: 'response.function_call_arguments.delta', item_id: 'fc_2', call_id: 'call_2', delta: '{' });
+    yield JSON.stringify({ type: 'response.function_call_arguments.delta', item_id: 'fc_2', call_id: 'call_2', delta: '}' });
+    yield JSON.stringify({ type: 'response.output_item.done', item: { type: 'function_call', id: 'fc_2', call_id: 'call_2', name: 'run', arguments: '{}' } });
+    yield JSON.stringify({ type: 'response.completed', response: {} });
+  })(), { model: 'm' }));
+  const finish = chunks.find((chunk) => chunk.type === 'finish');
+  assert.equal(finish.reason.kind, 'tool-calls');
+  assert.equal(finish.replayState, undefined);
+
+  const malformed = await translateError({ type: 'response.output_item.added', item: { type: 'function_call', call_id: 'call_bad' } });
+  assert.equal(malformed.code, 'INVALID_RESPONSE');
+});
+
+test('deduplicates full arguments.done after prior argument deltas', async () => {
+  const chunks = await collect(translate((async function* () {
+    yield JSON.stringify({ type: 'response.output_item.added', item: { type: 'function_call', id: 'fc_3', call_id: 'call_3', name: 'run' } });
+    yield JSON.stringify({ type: 'response.function_call_arguments.delta', item_id: 'fc_3', call_id: 'call_3', delta: '{"x":1}' });
+    yield JSON.stringify({ type: 'response.function_call_arguments.done', item_id: 'fc_3', call_id: 'call_3', arguments: '{"x":1}' });
+    yield JSON.stringify({ type: 'response.output_item.done', item: { type: 'function_call', id: 'fc_3', call_id: 'call_3', name: 'run', arguments: '{"x":1}' } });
+    yield JSON.stringify({ type: 'response.completed', response: {} });
+  })(), { model: 'm' }));
+  const tool = chunks.find((chunk) => chunk.type === 'block-end' && chunk.block?.type === 'tool-call');
+  assert.equal(tool.block.arguments, '{"x":1}');
+});
+
 test('natural SSE close is STREAM_CLOSED and includes stream facts', async () => {
   const error = await captureError(() => collect(translate((async function* () { yield JSON.stringify({ type: 'response.created' }); })(), { model: 'm' })));
   assert.equal(error.code, 'STREAM_CLOSED');
