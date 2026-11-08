@@ -5,7 +5,7 @@
 # profile package.json 的 dsh.profile.bundles 层栈,无需手工编辑
 # cordis.patch.yml。
 #
-# 机器相关的配置(如 proxy)请放 settings.yaml 的 `llm-codex:` 段,不进本文件。
+# 机器相关的配置(如 proxy)请放 profile entry 的 config(或 DSH 设置页),不进本文件。
 - insert:
     - id: llm-codex
       name: 'dsh-llm-codex'

@@ -5,19 +5,16 @@
  * 用法: node test/version-probe.mjs [clientVersion] [model]
  */
 
-import { CodexAdapter } from '../lib/adapter.js';
-import { CodexCredentials } from '../lib/auth.js';
-import { createTransport } from '../lib/transport.js';
-import { CHATGPT_BASE_URL, CODEX_HEADERS, CODEX_HEADER_VALUES } from '../lib/constants.js';
+import { createLiveAdapter } from './live-support.mjs';
+import { CHATGPT_BASE_URL, CODEX_HEADERS, CODEX_HEADER_VALUES, DEFAULT_CODEX_CLIENT_VERSION } from '../lib/constants.js';
 
-const probeVersion = process.argv[4] ?? '0.160.1';
-const streamVersion = process.argv[2] ?? '0.160.1';
+const probeVersion = process.argv[4] ?? DEFAULT_CODEX_CLIENT_VERSION;
+const streamVersion = process.argv[2] ?? DEFAULT_CODEX_CLIENT_VERSION;
 const model = process.argv[3] ?? 'gpt-6.1-sol';
 
-const config = { writeBack: false, clientVersion: streamVersion, streamIdleTimeoutMs: 120_000 };
-const credentials = new CodexCredentials(() => config);
+const { adapter, credentials, transport } = await createLiveAdapter({ clientVersion: streamVersion });
 const creds = await credentials.current();
-const transport = await createTransport({});
+if (creds.mode !== 'chatgpt') throw new Error('Version probe requires ChatGPT subscription credentials.');
 
 for (const v of ['0.144.1', probeVersion]) {
   const url = new URL(`${CHATGPT_BASE_URL}/codex/models`);
@@ -31,19 +28,18 @@ for (const v of ['0.144.1', probeVersion]) {
     ...(creds.accountId ? { [CODEX_HEADERS.ACCOUNT_ID]: creds.accountId } : {}),
   };
   try {
-    const res = await transport.fetch(url, { method: 'GET', headers });
+    const res = await transport.fetch(url, { method: 'GET', headers, signal: AbortSignal.timeout(10_000) });
     const body = await res.json().catch(() => null);
     const models = Array.isArray(body?.models) ? body.models : Array.isArray(body?.data) ? body.data : [];
     const slugs = models.map((m) => m.slug ?? m.id).filter(Boolean);
     console.log(`[models ${v}] HTTP ${res.status} count=${slugs.length}`);
-    console.log(`    ${slugs.join(', ') || JSON.stringify(body).slice(0, 200)}`);
+    console.log(`    ${slugs.join(', ') || 'no model entries'}`);
   } catch (error) {
     console.log(`[models ${v}] FAILED: ${error?.cause?.message ?? error?.message ?? error}`);
   }
 }
 
 console.log(`[stream] model=${model} version=${streamVersion} …`);
-const adapter = new CodexAdapter({ options: () => config, credentials });
 let text = '';
 let finish;
 let usage;
@@ -66,4 +62,6 @@ try {
 console.log(`[stream] text=${JSON.stringify(text)}`);
 console.log(`[stream] finish=${finish?.kind}${finish?.kind === 'error' ? ` (${finish.failure?.message})` : ''}`);
 console.log(`[stream] usage=${usage ? JSON.stringify(usage) : 'n/a'}`);
-console.log(finish?.kind === 'stop' && text.trim().length > 0 ? 'WIRE OK' : 'WIRE FAILED');
+const ok = finish?.kind === 'stop' && text.trim().length > 0;
+console.log(ok ? 'WIRE OK' : 'WIRE FAILED');
+process.exitCode = ok ? 0 : 1;

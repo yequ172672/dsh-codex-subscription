@@ -1,34 +1,28 @@
 /**
- * 端到端冒烟测试:使用真实的 Codex CLI 本地凭证(只读,writeBack: false),
+ * 端到端冒烟测试:使用真实的 Codex CLI 本地凭证(只读,writeBack: false,禁止刷新),
  * 验证 ① 凭证解析 ② 模型目录 ③ 一次真实的流式对话。
  *
- * 运行前提:本仓库目录下存在 node_modules(见 install.ps1 / README 的联调说明),
+ * 运行前提:本仓库目录下存在 node_modules(见 README 的联调说明),
  * 且 ~/.codex/auth.json 已通过 "codex login" 登录。
  *
  * 用法:node test/smoke.mjs [模型名,默认 gpt-6.1-sol]
  */
 
-import { CodexAdapter } from '../lib/adapter.js';
-import { CodexCredentials } from '../lib/auth.js';
+import { createLiveAdapter } from './live-support.mjs';
 
-const model = process.argv[2] ?? process.env.CODEX_SMOKE_MODEL ?? 'gpt-6.1-sol';
+const model = process.argv.slice(2).find(arg => !arg.startsWith('--')) ?? process.env.CODEX_SMOKE_MODEL ?? 'gpt-6.1-sol';
 const withTools = process.argv.includes('--tools');
 const provider = 'codex';
 
-const config = {
-  writeBack: false, // 冒烟测试绝不改写用户的 auth.json
-  // clientVersion 走插件默认(constants.js,当前 0.160.1)
-  streamIdleTimeoutMs: 180_000,
-};
-const credentials = new CodexCredentials(() => config);
-const adapter = new CodexAdapter({ options: () => config, credentials });
+const { adapter, credentials, catalog } = await createLiveAdapter();
 
 // ① 凭证解析
 const creds = await credentials.current();
-console.log(`[1] credential mode = ${creds.mode}` + (creds.mode === 'chatgpt' ? ` (account: ${creds.accountId ?? '?'})` : ''));
+console.log(`[1] credential mode = ${creds.mode}`);
 
 // ② 模型目录
-const models = await adapter.listModels(provider);
+const models = catalog;
+if (!models.some(item => item.id === model)) throw new Error('Requested model is absent from the live catalog.');
 console.log(`[2] model catalog = ${models.length} models`);
 console.log('    ' + models.slice(0, 12).map((m) => m.id).join(', '));
 
@@ -39,7 +33,7 @@ const stream = adapter.stream({
   provider,
   model,
   system: '你是一个测试助手,回答尽量简短。',
-  reasoningEffort: 'max',
+  reasoningEffort: process.env.CODEX_SMOKE_EFFORT ?? 'low',
   maxTokens: 128000,
   messages: [
     {

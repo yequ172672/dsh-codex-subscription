@@ -1,7 +1,8 @@
 # dsh-llm-codex
 
-> 📦 已发布到 npm:[dsh-llm-codex](https://www.npmjs.com/package/dsh-llm-codex)(当前仓库版本 0.2.0)
+> 📦 npm 包:[dsh-llm-codex](https://www.npmjs.com/package/dsh-llm-codex)(当前 GitHub 版本 0.2.1;npm 发布独立管理)
 > · 📚 GitHub:[yequ172672/dsh-codex-subscription](https://github.com/yequ172672/dsh-codex-subscription)
+> · 📝 [更新日志](CHANGELOG.md) · [GitHub Releases](https://github.com/yequ172672/dsh-codex-subscription/releases)
 > · 🏷️ 属于 [dsh-plugin](https://github.com/topics/dsh-plugin) 插件话题
 
 DSH(DeepSeek Harness)LLM 适配器插件:**直接复用 Codex CLI 的本地登录凭证**,在 DSH 中
@@ -22,8 +23,11 @@ DSH(DeepSeek Harness)LLM 适配器插件:**直接复用 Codex CLI 的本地登�
 `prepareCall`。请使用 0.2.x。
 
 **Codex wire 版本**:服务端按 `version` 头门控模型目录 —— 旧默认 `0.144.1` 只返回
-旧目录且拒绝 `gpt-6.1-sol`(HTTP 400 "not supported … ChatGPT account");0.2.x 默认
-已升到 `0.160.1`(2026-10 实测返回全量目录)。可用配置 `clientVersion` 覆盖。
+旧目录且拒绝 `gpt-6.1-sol`(HTTP 400 "not supported … ChatGPT account");0.2.1 默认已对齐 **`0.167.0`**([官方稳定版,2026-11-06](https://learn.chatgpt.com/docs/changelog))。可用配置 `clientVersion` 覆盖,目录查询与推理请求共用同一版本。
+
+**验证结果**:0.2.1 已通过 60 项离线回归、`dsh-llm 0.2.0-rc.2` 契约测试，以及 DSH CLI `0.2.2-rc.1` / Cordis `4.1.0` 的隔离安装、bundle 自动激活、真实 Loader、provider 注册、prepareCall 和流式调用测试。真实 ChatGPT 订阅已验证 GPT-6.1 Sol 文本与完整工具回合。详见 [验收记录](docs/verification-0.2.1.md)。
+
+**边界**:宿主流式集成使用模拟 SSE,真实后端测试走已安装 adapter。未验证完整桌面 UI/TUI、原生子进程功能或真实令牌轮换。新版宿主安装可能提示旧依赖的 Cordis peer 版本警告;上述实际装载与调用已通过,不代表所有宿主版本都已验证。
 
 ## 搭配推荐:dsh-session-import-codex
 
@@ -44,7 +48,7 @@ pnpm --dir "$env:USERPROFILE\.dsh\profiles\web" exec dsh-import-codex --profile 
 ## 原理
 
 Codex CLI(`codex login`)会把 ChatGPT 订阅的 OAuth 令牌写入 `~/.codex/auth.json`(或
-`CODEX_HOME`)。本插件与 codex CLI **同源读取该文件**,并参照两个成熟实现
+`CODEX_HOME`)。本插件只读取文件凭证;新版 Codex 的 keyring/ephemeral 存储不在支持范围内,缺少文件不等于没有登录。请检查已有的文件存储或显式 `authFile`,不要为了插件导出或粘贴令牌。参见 [Codex 认证存储说明](https://learn.chatgpt.com/docs/auth)。本插件与 codex CLI **同源读取该文件**,并参照两个成熟实现
 (参考实现:你的 [oh-my-pi-cn](https://github.com/yequ172672/oh-my-pi-cn) 与
 [opencodex](https://www.npmjs.com/package/@bitkyc08/opencodex))的 wire 细节:
 
@@ -56,9 +60,9 @@ Codex CLI(`codex login`)会把 ChatGPT 订阅的 OAuth 令牌写入 `~/.codex/au
 - **凭证热跟随**:每次请求都重新读 `auth.json`,CLI 登录/换号/登出,DSH 下一次请求自动生效。
 - **令牌刷新**:access_token 过期(HTTP 401)时用 `refresh_token` 走
   `auth.openai.com/oauth/token` 刷新并自动重试一次;刷新成功后默认**原子写回**
-  auth.json(`writeBack: false` 可关闭),与 codex CLI 行为一致,两边凭证永远同步。
+  auth.json(`writeBack: false` 可关闭)。不写回或写回失败时使用内存刷新结果重试,后续请求继续复用;文件换号、路径切换或登出会使旧内存结果失效;刷新进行中发生这些变化时终止旧请求,避免覆盖新登录。
 - **模型目录**:优先实时拉取 `GET {base}/codex/models`,失败时回退
-  `~/.codex/models_cache.json`,再回退内置静态列表。
+  `~/.codex/models_cache.json`,再回退内置静态列表。API key 模式使用 `/v1/models`;目录或兜底条目不保证账号有权使用,仍以实际请求结果为准。
 - **协议**:OpenAI Responses API(`stream: true` SSE),推理摘要、正文、工具调用分别映射为
   DSH 的 reasoning / text / tool-call 块,usage 从 `response.completed` 提取。
 
@@ -78,7 +82,13 @@ lib/
 cordis.bundle.yml   dsh.bundle 声明的 profile 层(插件行;安装后自动挂载)
 test/serialize.mjs       请求序列化单元测试
 test/apply-contract.mjs  0.2.0 宿主装载契约测试(离线)
-test/smoke.mjs           端到端冒烟测试(只读,绝不写 auth.json)
+test/adapter.mjs         模拟 401 重试、请求头与参数回归
+test/auth.mjs            假凭证刷新/写回/换号测试(临时目录)
+test/models.mjs          模型目录、API 路径、取消与超时
+test/translate.mjs       SSE 正文/推理/工具/终结事件回归
+test/live-support.mjs    在线测试公共安全设置与已安装包导入
+test/smoke.mjs           端到端冒烟测试(不写入或刷新凭据)
+test/roundtrip.mjs       真实工具请求→工具结果→模型接续回复
 test/version-probe.mjs   client_version 门控探针 + 最小流式对话
 ```
 
@@ -99,7 +109,15 @@ test/version-probe.mjs   client_version 门控探针 + 最小流式对话
 
 ### 安装插件
 
-安装已发布的包:
+**安装本次 GitHub Release 0.2.1**(不依赖 npm 是否已更新):
+
+```powershell
+dsh plugin --profile web add https://github.com/yequ172672/dsh-codex-subscription/releases/download/v0.2.1/dsh-llm-codex-0.2.1.tgz
+```
+
+或从 [发行版页面](https://github.com/yequ172672/dsh-codex-subscription/releases/tag/v0.2.1) 下载 tgz 后,把上面的 URL 换成本地文件路径。安装后重启对应 DSH profile。发行版同时提供 SHA256 校验文件。
+
+安装 npm 当前已发布的版本(可能落后于 GitHub Release):
 
 ```powershell
 dsh plugin --profile web add dsh-llm-codex
@@ -153,7 +171,7 @@ ChatGPT 后端通常需要走本地代理;Node 原生 fetch 不读系统代理�
 
 也可用环境变量 `HTTPS_PROXY`(优先级:显式 `proxy` 配置 > `HTTPS_PROXY` >
 `HTTP_PROXY`;`NO_PROXY` 命中的主机直连)。其他可选字段:`clientVersion`(默认
-`0.160.1`)、`writeBack`(默认 `true`)、`streamIdleTimeoutMs`、`authFile`、
+`0.167.0`)、`writeBack`(默认 `true`)、`streamIdleTimeoutMs`、`authFile`、
 `modelsCacheFile`、`staticModels`(显式模型目录)。
 
 选用 codex 作为默认模型(`cordis.patch.yml`):
@@ -186,34 +204,54 @@ patch 文件只含插件行,不含任何机器相关的配置。
 ## 测试
 
 ```powershell
-npm test                              # 序列化单元测试 + 0.2.0 装载契约测试
+npm test                              # 全部离线回归 + 0.2.0 装载契约测试
 npm run test:smoke                    # 文本对话(默认模型 gpt-6.1-sol)
 npm run test:smoke -- gpt-5.5         # 指定模型
 npm run test:smoke -- gpt-6.1-sol --tools   # 额外验证工具调用路径
+npm run test:roundtrip                # 完整工具调用与历史回放
 npm run test:probe                    # client_version 门控探针 + 最小流式对话
 ```
 
 冒烟测试输出凭证形态、模型目录(实时拉取)、一次真实流式对话的结果与 usage。
-测试默认只读(`writeBack: false`),绝不改写 auth.json;需要走代理时设置
-`HTTPS_PROXY`(如 `http://127.0.0.1:7890`)。
+在线测试默认只读(`writeBack: false`)且禁止刷新令牌,不会改写 auth.json 或轮换保存的刷新令牌。收到 401 时请通过 Codex 自己重新登录后再测。必须启用 TLS 证书校验。需要走代理时设置 `CODEX_TEST_PROXY` 或 `HTTPS_PROXY`(如 `http://127.0.0.1:7890`)。
+
+```powershell
+$env:NODE_TLS_REJECT_UNAUTHORIZED = "1"
+$env:CODEX_TEST_PROXY = "http://127.0.0.1:7890" # 仅在需要且该代理实际可用时
+# 可选:测试已安装的发行包,而不是当前源码
+$env:CODEX_TEST_PACKAGE_ROOT = "C:\path\to\profile\node_modules\dsh-llm-codex"
+npm run test:smoke
+npm run test:roundtrip
+```
 
 ## 故障排查
 
 | 现象 | 处理 |
 | --- | --- |
-| `MISSING_CREDENTIAL:无法读取 Codex 凭证文件` | 先运行 `codex login` 登录 |
+| `MISSING_CREDENTIAL:无法读取 Codex 凭证文件` | 检查 authFile/CODEX_HOME 与文件存储;keyring/ephemeral 登录不提供该文件 |
 | `TRANSPORT:Connect Timeout` | 本机直连 ChatGPT 后端被墙;配置 `proxy`(见上文) |
 | HTTP 401 且刷新失败 | 订阅过期或被风控;运行 `codex login` 重新登录 |
 | HTTP 429 | 订阅额度/限流,稍后重试 |
 | `INVALID_REQUEST:System messages are not allowed` | 系统提示已自动改走 `instructions` 字段,不应出现;如出现请升级插件 |
 | `INVALID_REQUEST:Unsupported parameter` | 订阅后端拒绝 `max_output_tokens`/`temperature`/`stop`,适配器已自动剥离;如仍出现请升级插件 |
-| `The 'gpt-6.1-sol' model is not supported … ChatGPT account` | `client_version` 太旧被服务端门控;升级插件(默认已 0.160.1)或把 `clientVersion` 配成与本机 codex 一致的版本 |
+| `The 'gpt-6.1-sol' model is not supported … ChatGPT account` | `client_version` 太旧被服务端门控;升级插件(默认已 0.167.0)或把 `clientVersion` 配成与本机 codex 一致的版本 |
 | 模型列表只有旧模型(gpt-5.6 系) | 实时发现被 0.144.1 旧版本头门控;同上调整 `clientVersion` |
 | 模型列表为空 | 实时发现失败且 models_cache.json 不可读时使用内置静态列表 |
 
 ## 注意事项
 
 - 本插件会读取并(在刷新时)改写 `~/.codex/auth.json`,与 codex CLI 行为一致;如不希望
-  写回,设置 `writeBack: false`(届时过期令牌只在内存中刷新,重启 dsh 后重新刷新)。
+  写回,设置 `writeBack: false`(刷新后的令牌只保留在当前进程中;重启后需要重新取得有效凭证,原刷新令牌可能已轮换)。
 - 适配器为文本 only:图片内容会以 `UNSUPPORTED_CONTENT` 拒绝。
 - 订阅额度由 OpenAI 按账号计量,与 codex CLI 共用同一配额。
+
+## 0.2.1 兼容性修复
+
+- 默认 wire 版本更新为 Codex CLI 0.167.0;空白配置也使用同一默认值。静态目录增加 GPT-6.1 Terra,并将 6.1 系列上下文兜底校正为当天在线目录返回的 500,000 tokens。
+- 修复关闭凭证写回时的 401 重试及进程内令牌复用。
+- 恢复只有 done 事件的正文/工具参数,修复工具调用完成状态,处理嵌套失败/截断及 usage。
+- 修复 API key 模式模型目录地址,为目录请求保留 10 秒超时并传播调用方取消。
+- staticModels 可配置 defaultEffort/efforts;序列化保留模型支持的 none/minimal,不发送 Responses 不支持的 stop 参数。
+- 图片仍不受支持,包括工具结果内的图片;现在明确拒绝而不是静默丢弃。
+
+官方协议参考:[Responses 流事件](https://developers.openai.com/api/reference/resources/responses/streaming-events)、[推理等级](https://developers.openai.com/api/docs/guides/reasoning)。

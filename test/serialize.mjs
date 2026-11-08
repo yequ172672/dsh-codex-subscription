@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { normalizeCallId, serializeMessages } from '../lib/serialize.js';
+import { normalizeCallId, serializeMessages, serializeRequest, wireEffort } from '../lib/serialize.js';
 
 function pairedCallIds(id) {
   const messages = [
@@ -49,4 +49,23 @@ test('normalizes forbidden call ID characters deterministically', () => {
   assert.equal(normalized, normalizeCallId(id));
   assert.equal(normalized.length, 64);
   assert.match(normalized, /^[a-zA-Z0-9_-]+$/);
+});
+
+
+test('preserves supported model-specific reasoning efforts without guessing a replacement', () => {
+  for (const effort of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']) {
+    assert.equal(wireEffort(effort), effort);
+    assert.equal(serializeRequest({ model: 'fixture-model', messages: [], reasoningEffort: effort }).reasoning.effort, effort);
+  }
+  for (const effort of [undefined, null, 'off', 'disabled', 'unknown']) assert.equal(wireEffort(effort), undefined);
+});
+
+test('does not send the Chat Completions-only stop parameter', () => {
+  const body = serializeRequest({ model: 'fixture-model', messages: [], stop: ['stop'] });
+  assert.equal(Object.hasOwn(body, 'stop'), false);
+});
+
+test('rejects image content inside tool results instead of silently dropping it', () => {
+  const messages = [{ role: 'user', content: [{ type: 'tool-result', toolCallId: 'call_1', content: [{ type: 'image', data: 'fixture-image', mimeType: 'image/png' }] }] }];
+  assert.throws(() => serializeMessages(messages, []), error => error.code === 'UNSUPPORTED_CONTENT');
 });

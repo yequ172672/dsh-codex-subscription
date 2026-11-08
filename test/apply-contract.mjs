@@ -15,6 +15,7 @@
 import assert from 'node:assert/strict';
 
 import plugin, { Config, PROVIDER } from '../lib/index.js';
+import { DEFAULT_CODEX_CLIENT_VERSION } from '../lib/constants.js';
 
 // ① 导出形状
 assert.equal(plugin.name, 'llm-codex');
@@ -42,7 +43,7 @@ const config = validated.value;
 assert.equal(typeof config.proxy.get, 'function');
 assert.equal(config.proxy.get(), 'http://127.0.0.1:7890');
 assert.equal(config.writeBack.get(), false);
-assert.equal(config.clientVersion.get(), '0.160.1'); // 默认值经 volatile 引用可见
+assert.equal(config.clientVersion.get(), DEFAULT_CODEX_CLIENT_VERSION); // 默认值经 volatile 引用可见
 assert.deepEqual(config.staticModels.get(), []); // 未配置 → 空数组快照(resolveOptions 会当作未设置)
 
 // ④ 模拟 0.2.0 宿主的两处注册校验
